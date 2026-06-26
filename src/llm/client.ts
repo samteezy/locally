@@ -91,6 +91,9 @@ export async function runCompletionWithTools(
   }
 
   if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      throw new Error(`LLM endpoint authentication failed (HTTP ${response.status}) — check your API key in locally.config.json or LOCALLY_API_KEY env var`);
+    }
     const text = await response.text().catch(() => "");
     throw new Error(`LLM endpoint returned ${response.status} ${response.statusText}: ${text}`);
   }

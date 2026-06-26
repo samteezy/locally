@@ -2,6 +2,7 @@ import { runCompletionWithTools, type Message, type ToolDefinition } from "./cli
 import { exploreFiles, EXPLORE_FILES_SCHEMA } from "../tools/explore-files.js";
 import { readFile, READ_FILE_SCHEMA } from "../tools/read-file.js";
 import { writeFile, WRITE_FILE_SCHEMA } from "../tools/write-file.js";
+import { patchFile, PATCH_FILE_SCHEMA } from "../tools/patch-file.js";
 import { runShell, RUN_SHELL_SCHEMA } from "../tools/run-shell.js";
 import type { ResolvedAgentConfig } from "../config.js";
 
@@ -55,6 +56,18 @@ export const RUN_AGENT_TOOLS: AgentTool[] = [
     definition: {
       type: "function",
       function: {
+        name: "patch_file",
+        description:
+          "Replace an exact string in a file. Prefer this over write_file for targeted edits — safer than rewriting the whole file.",
+        parameters: PATCH_FILE_SCHEMA,
+      },
+    },
+    handler: (args) => patchFile(args as Parameters<typeof patchFile>[0]),
+  },
+  {
+    definition: {
+      type: "function",
+      function: {
         name: "run_shell",
         description:
           "Run a nondestructive shell command from the allowlist. Use to check compilation errors, run tests, inspect git state, or verify output.",
@@ -71,7 +84,8 @@ export async function runAgentLoop(
   config: ResolvedAgentConfig,
   messages: Message[],
   tools: AgentTool[],
-  maxIterations: number = MAX_ITERATIONS_DEFAULT
+  maxIterations: number = MAX_ITERATIONS_DEFAULT,
+  onProgress?: (message: string) => void
 ): Promise<string> {
   const toolDefs: ToolDefinition[] = tools.map((t) => t.definition);
   const toolMap = new Map<string, AgentTool["handler"]>(
@@ -85,6 +99,7 @@ export async function runAgentLoop(
 
   while (iterations < maxIterations) {
     iterations++;
+    onProgress?.(`[iteration ${iterations}/${maxIterations}]`);
 
     const turn = await runCompletionWithTools(config, messages, toolDefs);
 
@@ -112,6 +127,7 @@ export async function runAgentLoop(
         result = `(already retrieved — returning cached result)\n${toolResultCache.get(cacheKey)!}`;
       } else {
         try {
+          onProgress?.(`[tool: ${name}] ${argsJson}`);
           let parsedArgs: unknown;
           try {
             parsedArgs = JSON.parse(argsJson);

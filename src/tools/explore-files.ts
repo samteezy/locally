@@ -5,7 +5,7 @@ import { join, relative, extname } from "node:path";
 
 const execFileAsync = promisify(execFile);
 
-const IGNORED_DIRS = new Set([
+export const IGNORED_DIRS = new Set([
   "node_modules", ".git", "dist", "build", ".next", ".nuxt",
   "__pycache__", ".cache", ".turbo", "coverage", ".nyc_output",
 ]);
@@ -37,7 +37,13 @@ function matchesPattern(filename: string, pattern?: string): boolean {
   return filename.includes(pattern);
 }
 
-export async function buildTree(dirPath: string, maxDepth: number, depth = 0, prefix = ""): Promise<string> {
+export async function buildTree(
+  dirPath: string,
+  maxDepth: number,
+  ignoreDirs: Set<string>,
+  depth = 0,
+  prefix = ""
+): Promise<string> {
   if (depth >= maxDepth) return "";
 
   let entries;
@@ -48,7 +54,7 @@ export async function buildTree(dirPath: string, maxDepth: number, depth = 0, pr
   }
 
   const visible = entries
-    .filter((e) => !(e.isDirectory() && IGNORED_DIRS.has(e.name)))
+    .filter((e) => !(e.isDirectory() && ignoreDirs.has(e.name)))
     .sort((a, b) => {
       if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
       return a.name.localeCompare(b.name);
@@ -67,6 +73,7 @@ export async function buildTree(dirPath: string, maxDepth: number, depth = 0, pr
       const subtree = await buildTree(
         join(dirPath, entry.name),
         maxDepth,
+        ignoreDirs,
         depth + 1,
         prefix + childPrefix
       );
@@ -83,6 +90,7 @@ async function collectFiles(
   maxDepth: number,
   maxFileSizeKb: number,
   filePattern: string | undefined,
+  ignoreDirs: Set<string>,
   depth = 0
 ): Promise<Array<{ path: string; content: string }>> {
   if (depth >= maxDepth) return [];
@@ -105,8 +113,8 @@ async function collectFiles(
     const fullPath = join(dirPath, entry.name);
 
     if (entry.isDirectory()) {
-      if (IGNORED_DIRS.has(entry.name)) continue;
-      const sub = await collectFiles(fullPath, rootPath, maxDepth, maxFileSizeKb, filePattern, depth + 1);
+      if (ignoreDirs.has(entry.name)) continue;
+      const sub = await collectFiles(fullPath, rootPath, maxDepth, maxFileSizeKb, filePattern, ignoreDirs, depth + 1);
       results.push(...sub);
     } else if (entry.isFile()) {
       if (BINARY_EXTENSIONS.has(extname(entry.name).toLowerCase())) continue;
@@ -132,6 +140,7 @@ export interface ExploreFilesParams {
   file_pattern?: string;
   max_depth?: number;
   max_file_size_kb?: number;
+  ignore_patterns?: string[];
 }
 
 export const EXPLORE_FILES_SCHEMA: Record<string, unknown> = {
@@ -158,12 +167,24 @@ export const EXPLORE_FILES_SCHEMA: Record<string, unknown> = {
       type: "number",
       description: "Skip files larger than this many KB (default: 100)",
     },
+    ignore_patterns: {
+      type: "array",
+      items: { type: "string" },
+      description: "Additional directory names or glob patterns to ignore",
+    },
   },
   required: ["path"],
 };
 
 export async function exploreFiles(params: ExploreFilesParams): Promise<string> {
-  const { path: dirPath, query, file_pattern, max_depth = 5, max_file_size_kb = 100 } = params;
+  const { path: dirPath, query, file_pattern, max_depth = 5, max_file_size_kb = 100, ignore_patterns } = params;
+
+  const mergedIgnoreDirs = new Set<string>(IGNORED_DIRS);
+  if (ignore_patterns) {
+    for (const p of ignore_patterns) {
+      mergedIgnoreDirs.add(p);
+    }
+  }
 
   let dirStat;
   try {
@@ -177,7 +198,7 @@ export async function exploreFiles(params: ExploreFilesParams): Promise<string> 
 
   const sections: string[] = [];
 
-  const tree = await buildTree(dirPath, max_depth);
+  const tree = await buildTree(dirPath, max_depth, mergedIgnoreDirs);
   sections.push(`## Directory: ${dirPath}\n\n.\n${tree}`);
 
   if (query) {
@@ -192,9 +213,11 @@ export async function exploreFiles(params: ExploreFilesParams): Promise<string> 
         const { stdout } = await execFileAsync("rg", args, { maxBuffer: 10 * 1024 * 1024 });
         searchOutput = stdout.trim() || "(no results)";
       } catch (err) {
-        const e = err as { code?: number };
+        const e = err as { message?: string; code?: number };
         if (e.code === 1) {
           searchOutput = "(no results)";
+        } else if (e.message?.includes("maxBuffer") || e.message?.includes("ERR_CHILD_PROCESS_STDIO_MAXBUFFER")) {
+          searchOutput = "(search results exceeded 10MB limit — try a more specific query)";
         } else {
           throw err;
         }
@@ -212,9 +235,11 @@ export async function exploreFiles(params: ExploreFilesParams): Promise<string> 
         const { stdout } = await execFileAsync("grep", args, { maxBuffer: 10 * 1024 * 1024 });
         searchOutput = stdout.trim() || "(no results)";
       } catch (err) {
-        const e = err as { code?: number };
+        const e = err as { message?: string; code?: number };
         if (e.code === 1) {
           searchOutput = "(no results)";
+        } else if (e.message?.includes("maxBuffer") || e.message?.includes("ERR_CHILD_PROCESS_STDIO_MAXBUFFER")) {
+          searchOutput = "(search results exceeded 10MB limit — try a more specific query)";
         } else {
           throw err;
         }
@@ -222,7 +247,7 @@ export async function exploreFiles(params: ExploreFilesParams): Promise<string> 
       sections.push(`## Search (grep): "${query}"\n\n${searchOutput}`);
     }
   } else {
-    const files = await collectFiles(dirPath, dirPath, max_depth, max_file_size_kb, file_pattern);
+    const files = await collectFiles(dirPath, dirPath, max_depth, max_file_size_kb, file_pattern, mergedIgnoreDirs);
 
     if (files.length === 0) {
       sections.push("## Files\n\n(no files found matching criteria)");

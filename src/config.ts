@@ -27,6 +27,7 @@ export interface LocallyConfig {
     explore?: ToolRoutingConfig;
     run?: ToolRoutingConfig;
   };
+  ignorePatterns?: string[];
 }
 
 export interface ResolvedAgentConfig {
