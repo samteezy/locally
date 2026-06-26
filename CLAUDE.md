@@ -16,10 +16,13 @@ npm run dev:http    # HTTP mode, watch
 - `src/index.ts` — entry point, selects transport
 - `src/config.ts` — config loading and agent resolution
 - `src/server.ts` — MCP server factory, tool registration
-- `src/tools/explore-files.ts` — directory walker (ripgrep → grep fallback)
-- `src/tools/run-task.ts` — delegates to OpenAI-compatible endpoint
-- `src/transport/stdio.ts` / `http.ts` — stdio and Streamable HTTP transports
+- `src/tools/explore-task.ts` — `explore_task` tool: builds dir tree, runs agentic loop for Q&A/analysis
+- `src/tools/run-task.ts` — `run_task` tool: builds dir tree, runs agentic loop for writing/generation
+- `src/tools/explore-files.ts` — directory walker available to the agentic loop (ripgrep → grep fallback)
+- `src/tools/read-file.ts` — file reader available to the agentic loop (path + optional line range)
+- `src/llm/agent-loop.ts` — agentic loop: tool-call dispatch, result caching, max-iterations guard
 - `src/llm/client.ts` — fetch-based OpenAI client, no external deps
+- `src/transport/stdio.ts` / `http.ts` — stdio and Streamable HTTP transports
 
 ## Conventions
 
