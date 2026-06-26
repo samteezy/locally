@@ -3,10 +3,21 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { createServer as createMcpServer } from "../server.js";
 import type { LocallyConfig } from "../config.js";
 
+const MAX_BODY_BYTES = 1024 * 1024; // 1MB
+
 async function readBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    let totalSize = 0;
+    req.on("data", (chunk: Buffer) => {
+      totalSize += chunk.length;
+      if (totalSize > MAX_BODY_BYTES) {
+        req.destroy();
+        reject(new Error("Request body too large"));
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on("end", () => {
       const raw = Buffer.concat(chunks).toString("utf-8");
       if (!raw) {
@@ -41,7 +52,17 @@ export async function startHttp(config: LocallyConfig): Promise<void> {
           sessionIdGenerator: undefined,
         });
         await mcpServer.connect(transport);
-        const body = await readBody(req);
+        let body: unknown;
+        try {
+          body = await readBody(req);
+        } catch (err) {
+          if (err instanceof Error && err.message === "Request body too large") {
+            res.writeHead(413, { "Content-Type": "text/plain" });
+            res.end("Payload too large");
+            return;
+          }
+          throw err;
+        }
         await transport.handleRequest(req, res, body);
         return;
       }

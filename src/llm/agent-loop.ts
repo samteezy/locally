@@ -92,7 +92,10 @@ export async function runAgentLoop(
     tools.map((t) => [t.definition.function.name, t.handler])
   );
 
-  // Cache keyed by "toolName:argsJson" — return cached results on duplicate calls
+  // Cache keyed by "toolName:normalizedArgsJson" — return cached results on duplicate calls.
+  // Normalized to avoid cache misses from semantically identical but whitespace-differing JSON.
+  // Capped at MAX_CACHE_SIZE entries; evicts oldest when full.
+  const MAX_CACHE_SIZE = 50;
   const toolResultCache = new Map<string, string>();
 
   let iterations = 0;
@@ -120,31 +123,35 @@ export async function runAgentLoop(
 
     for (const toolCall of turn.tool_calls) {
       const { name, arguments: argsJson } = toolCall.function;
-      const cacheKey = `${name}:${argsJson}`;
-      let result: string;
+      let result = "";
 
-      if (toolResultCache.has(cacheKey)) {
-        result = `(already retrieved — returning cached result)\n${toolResultCache.get(cacheKey)!}`;
-      } else {
+      try {
+        // Parse once — used for cache key normalization and handler invocation
+        let parsedArgs: unknown;
         try {
-          onProgress?.(`[tool: ${name}] ${argsJson}`);
-          let parsedArgs: unknown;
-          try {
-            parsedArgs = JSON.parse(argsJson);
-          } catch {
-            throw new Error(`Invalid JSON in tool arguments: ${argsJson}`);
-          }
+          parsedArgs = JSON.parse(argsJson);
+        } catch {
+          throw new Error(`Invalid JSON in tool arguments: ${argsJson}`);
+        }
+        const cacheKey = `${name}:${JSON.stringify(parsedArgs)}`;
 
+        if (toolResultCache.has(cacheKey)) {
+          result = `(already retrieved — returning cached result)\n${toolResultCache.get(cacheKey)!}`;
+        } else {
+          onProgress?.(`[tool: ${name}] ${argsJson}`);
           const handler = toolMap.get(name);
           if (!handler) {
             result = `Error: unknown tool "${name}"`;
           } else {
             result = await handler(parsedArgs);
           }
-        } catch (err) {
-          result = `Error: ${err instanceof Error ? err.message : String(err)}`;
+          if (toolResultCache.size >= MAX_CACHE_SIZE) {
+            toolResultCache.delete(toolResultCache.keys().next().value!);
+          }
+          toolResultCache.set(cacheKey, result);
         }
-        toolResultCache.set(cacheKey, result);
+      } catch (err) {
+        result = `Error: ${err instanceof Error ? err.message : String(err)}`;
       }
 
       messages.push({

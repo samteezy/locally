@@ -37,6 +37,20 @@ function matchesPattern(filename: string, pattern?: string): boolean {
   return filename.includes(pattern);
 }
 
+function sortEntries(a: { isDirectory(): boolean; name: string }, b: { isDirectory(): boolean; name: string }): number {
+  if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+  return a.name.localeCompare(b.name);
+}
+
+function handleSearchError(err: unknown): string {
+  const e = err as { message?: string; code?: number };
+  if (e.code === 1) return "(no results)";
+  if (e.message?.includes("maxBuffer") || e.message?.includes("ERR_CHILD_PROCESS_STDIO_MAXBUFFER")) {
+    return "(search results exceeded 10MB limit — try a more specific query)";
+  }
+  throw err;
+}
+
 export async function buildTree(
   dirPath: string,
   maxDepth: number,
@@ -55,10 +69,7 @@ export async function buildTree(
 
   const visible = entries
     .filter((e) => !(e.isDirectory() && ignoreDirs.has(e.name)))
-    .sort((a, b) => {
-      if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+    .sort(sortEntries);
 
   const lines: string[] = [];
   for (let i = 0; i < visible.length; i++) {
@@ -91,6 +102,7 @@ async function collectFiles(
   maxFileSizeKb: number,
   filePattern: string | undefined,
   ignoreDirs: Set<string>,
+  maxFiles: number,
   depth = 0
 ): Promise<Array<{ path: string; content: string }>> {
   if (depth >= maxDepth) return [];
@@ -104,17 +116,16 @@ async function collectFiles(
 
   const results: Array<{ path: string; content: string }> = [];
 
-  const sorted = entries.sort((a, b) => {
-    if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
+  const sorted = entries.sort(sortEntries);
 
   for (const entry of sorted) {
+    if (results.length >= maxFiles) break;
     const fullPath = join(dirPath, entry.name);
 
     if (entry.isDirectory()) {
       if (ignoreDirs.has(entry.name)) continue;
-      const sub = await collectFiles(fullPath, rootPath, maxDepth, maxFileSizeKb, filePattern, ignoreDirs, depth + 1);
+      const remaining = maxFiles - results.length;
+      const sub = await collectFiles(fullPath, rootPath, maxDepth, maxFileSizeKb, filePattern, ignoreDirs, remaining, depth + 1);
       results.push(...sub);
     } else if (entry.isFile()) {
       if (BINARY_EXTENSIONS.has(extname(entry.name).toLowerCase())) continue;
@@ -140,6 +151,7 @@ export interface ExploreFilesParams {
   file_pattern?: string;
   max_depth?: number;
   max_file_size_kb?: number;
+  max_files?: number;
   ignore_patterns?: string[];
 }
 
@@ -167,6 +179,10 @@ export const EXPLORE_FILES_SCHEMA: Record<string, unknown> = {
       type: "number",
       description: "Skip files larger than this many KB (default: 100)",
     },
+    max_files: {
+      type: "number",
+      description: "Maximum number of files to return when listing contents (default: 50)",
+    },
     ignore_patterns: {
       type: "array",
       items: { type: "string" },
@@ -176,8 +192,10 @@ export const EXPLORE_FILES_SCHEMA: Record<string, unknown> = {
   required: ["path"],
 };
 
+const MAX_FILES_DEFAULT = 50;
+
 export async function exploreFiles(params: ExploreFilesParams): Promise<string> {
-  const { path: dirPath, query, file_pattern, max_depth = 5, max_file_size_kb = 100, ignore_patterns } = params;
+  const { path: dirPath, query, file_pattern, max_depth = 5, max_file_size_kb = 100, max_files = MAX_FILES_DEFAULT, ignore_patterns } = params;
 
   const mergedIgnoreDirs = new Set<string>(IGNORED_DIRS);
   if (ignore_patterns) {
@@ -213,14 +231,7 @@ export async function exploreFiles(params: ExploreFilesParams): Promise<string> 
         const { stdout } = await execFileAsync("rg", args, { maxBuffer: 10 * 1024 * 1024 });
         searchOutput = stdout.trim() || "(no results)";
       } catch (err) {
-        const e = err as { message?: string; code?: number };
-        if (e.code === 1) {
-          searchOutput = "(no results)";
-        } else if (e.message?.includes("maxBuffer") || e.message?.includes("ERR_CHILD_PROCESS_STDIO_MAXBUFFER")) {
-          searchOutput = "(search results exceeded 10MB limit — try a more specific query)";
-        } else {
-          throw err;
-        }
+        searchOutput = handleSearchError(err);
       }
       sections.push(`## Search (ripgrep): "${query}"\n\n${searchOutput}`);
     } else {
@@ -235,28 +246,25 @@ export async function exploreFiles(params: ExploreFilesParams): Promise<string> 
         const { stdout } = await execFileAsync("grep", args, { maxBuffer: 10 * 1024 * 1024 });
         searchOutput = stdout.trim() || "(no results)";
       } catch (err) {
-        const e = err as { message?: string; code?: number };
-        if (e.code === 1) {
-          searchOutput = "(no results)";
-        } else if (e.message?.includes("maxBuffer") || e.message?.includes("ERR_CHILD_PROCESS_STDIO_MAXBUFFER")) {
-          searchOutput = "(search results exceeded 10MB limit — try a more specific query)";
-        } else {
-          throw err;
-        }
+        searchOutput = handleSearchError(err);
       }
       sections.push(`## Search (grep): "${query}"\n\n${searchOutput}`);
     }
   } else {
-    const files = await collectFiles(dirPath, dirPath, max_depth, max_file_size_kb, file_pattern, mergedIgnoreDirs);
+    const files = await collectFiles(dirPath, dirPath, max_depth, max_file_size_kb, file_pattern, mergedIgnoreDirs, max_files);
 
     if (files.length === 0) {
       sections.push("## Files\n\n(no files found matching criteria)");
     } else {
+      const truncated = files.length >= max_files;
       const blocks = files.map((f) => {
         const lang = extname(f.path).slice(1);
         return `### ${f.path}\n\`\`\`${lang}\n${f.content}\n\`\`\``;
       });
-      sections.push(`## Files (${files.length})\n\n${blocks.join("\n\n")}`);
+      const header = truncated
+        ? `## Files (${files.length}, truncated — use file_pattern or a subdirectory path to narrow scope)`
+        : `## Files (${files.length})`;
+      sections.push(`${header}\n\n${blocks.join("\n\n")}`);
     }
   }
 

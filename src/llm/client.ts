@@ -3,6 +3,7 @@ export interface LlmConfig {
   model: string;
   apiKey: string;
   maxTokens?: number;
+  timeout?: number; // seconds; default 120
 }
 
 export interface ToolDefinition {
@@ -77,17 +78,27 @@ export async function runCompletionWithTools(
     headers["Authorization"] = `Bearer ${config.apiKey}`;
   }
 
+  const timeoutSecs = config.timeout ?? 120;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutSecs * 1000);
+
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
   } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`LLM request timed out after ${timeoutSecs}s — increase timeout in config`);
+    }
     throw new Error(
       `Failed to reach LLM endpoint at ${url}: ${err instanceof Error ? err.message : String(err)}`
     );
+  } finally {
+    clearTimeout(timer);
   }
 
   if (!response.ok) {

@@ -76,13 +76,17 @@ export async function runShell(params: RunShellParams): Promise<string> {
       maxBuffer: MAX_OUTPUT_CHARS * 4,
     });
 
-    const combined = [stdout, stderr].filter(Boolean).join("\n");
-    return combined.slice(0, MAX_OUTPUT_CHARS) || "(no output)";
+    const parts: string[] = [];
+    if (stdout) parts.push(`stdout:\n${stdout}`);
+    if (stderr) parts.push(`stderr:\n${stderr}`);
+    return (parts.join("\n").slice(0, MAX_OUTPUT_CHARS) || "(no output)");
   } catch (err: unknown) {
     if (err !== null && typeof err === "object" && ("stdout" in err || "stderr" in err)) {
       const e = err as { stdout?: string; stderr?: string; code?: number };
-      const combined = [e.stdout, e.stderr].filter(Boolean).join("\n");
-      return `Exit code ${e.code ?? 1}:\n${combined.slice(0, MAX_OUTPUT_CHARS) || "(no output)"}`;
+      const parts: string[] = [];
+      if (e.stdout) parts.push(`stdout:\n${e.stdout}`);
+      if (e.stderr) parts.push(`stderr:\n${e.stderr}`);
+      return `Exit code ${e.code ?? 1}:\n${parts.join("\n").slice(0, MAX_OUTPUT_CHARS) || "(no output)"}`;
     }
     return `Error: ${err instanceof Error ? err.message : String(err)}`;
   }

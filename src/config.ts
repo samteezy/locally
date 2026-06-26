@@ -7,6 +7,7 @@ export interface AgentConfig {
   model?: string;
   apiKey?: string;
   maxTokens?: number;
+  timeout?: number; // seconds
 }
 
 export interface TransportConfig {
@@ -35,6 +36,7 @@ export interface ResolvedAgentConfig {
   model: string;
   apiKey: string;
   maxTokens?: number;
+  timeout?: number; // seconds
 }
 
 export function loadConfig(): LocallyConfig {
@@ -79,7 +81,7 @@ export function resolveAgentConfig(config: LocallyConfig, agentName?: string): R
   const maxTokens = defaults.maxTokens;
 
   if (!agentName) {
-    return { baseUrl, model, apiKey, maxTokens };
+    return { baseUrl, model, apiKey, maxTokens, timeout: defaults.timeout };
   }
 
   const override = config.agents?.[agentName];
@@ -92,6 +94,7 @@ export function resolveAgentConfig(config: LocallyConfig, agentName?: string): R
     model: override.model ?? model,
     apiKey: override.apiKey ?? apiKey,
     maxTokens: override.maxTokens ?? maxTokens,
+    timeout: override.timeout ?? defaults.timeout,
   };
 }
 
