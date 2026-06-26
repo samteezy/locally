@@ -1,8 +1,10 @@
 # locally
 
-An MCP server that lets frontier models (Claude, GPT-4, etc.) delegate cost-sensitive or repetitive tasks to smaller local models via any OpenAI-compatible endpoint — Ollama, LM Studio, vLLM, or any cloud provider.
+If Claude is your assistant, locally is your assistant's assistant.
 
-Two tools cover the main delegation patterns: **exploration** (understanding a codebase) and **generation** (writing and editing files). Each can be routed to a different model.
+Frontier models are expensive. locally runs on your own hardware for free — so when Claude needs to explore a codebase, draft some code, or answer a low-stakes question, it can hand that off to a smaller local model instead of burning tokens doing it itself.
+---
+locally is an MCP server that connects to any OpenAI-compatible endpoint — llama.cpp, LM Studio, vLLM, or even (if you really want) a different cloud provider. Two tools cover the main delegation patterns: **exploration** (understanding a codebase) and **generation** (writing and editing files). Each can be routed to a different model if desired.
 
 ## Tools
 
