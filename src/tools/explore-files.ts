@@ -37,7 +37,7 @@ function matchesPattern(filename: string, pattern?: string): boolean {
   return filename.includes(pattern);
 }
 
-async function buildTree(dirPath: string, maxDepth: number, depth = 0, prefix = ""): Promise<string> {
+export async function buildTree(dirPath: string, maxDepth: number, depth = 0, prefix = ""): Promise<string> {
   if (depth >= maxDepth) return "";
 
   let entries;
@@ -133,6 +133,34 @@ export interface ExploreFilesParams {
   max_depth?: number;
   max_file_size_kb?: number;
 }
+
+export const EXPLORE_FILES_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    path: {
+      type: "string",
+      description: "Path to the directory to explore",
+    },
+    query: {
+      type: "string",
+      description:
+        "Search for content using ripgrep (or grep). When provided, returns matching lines instead of full file contents.",
+    },
+    file_pattern: {
+      type: "string",
+      description: 'Filter files by pattern, e.g. "*.ts" or "*.md"',
+    },
+    max_depth: {
+      type: "number",
+      description: "Max directory depth to traverse (default: 5)",
+    },
+    max_file_size_kb: {
+      type: "number",
+      description: "Skip files larger than this many KB (default: 100)",
+    },
+  },
+  required: ["path"],
+};
 
 export async function exploreFiles(params: ExploreFilesParams): Promise<string> {
   const { path: dirPath, query, file_pattern, max_depth = 5, max_file_size_kb = 100 } = params;

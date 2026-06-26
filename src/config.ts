@@ -15,10 +15,18 @@ export interface TransportConfig {
   host?: string;
 }
 
+export interface ToolRoutingConfig {
+  agent?: string;
+}
+
 export interface LocallyConfig {
   transport?: TransportConfig;
   default?: AgentConfig;
   agents?: Record<string, AgentConfig>;
+  tools?: {
+    explore?: ToolRoutingConfig;
+    run?: ToolRoutingConfig;
+  };
 }
 
 export interface ResolvedAgentConfig {
@@ -84,6 +92,14 @@ export function resolveAgentConfig(config: LocallyConfig, agentName?: string): R
     apiKey: override.apiKey ?? apiKey,
     maxTokens: override.maxTokens ?? maxTokens,
   };
+}
+
+export function resolveToolAgent(
+  config: LocallyConfig,
+  toolKey: "explore" | "run",
+  paramAgent?: string
+): string | undefined {
+  return paramAgent ?? config.tools?.[toolKey]?.agent;
 }
 
 export function resolveTransportMode(config: LocallyConfig): "stdio" | "http" {

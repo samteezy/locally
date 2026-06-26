@@ -18,5 +18,9 @@
       "model": "gpt-4o-mini",
       "apiKey": "sk-..."
     }
+  },
+  "tools": {
+    "explore": { "agent": "summarizer" },
+    "run": { "agent": "coder" }
   }
 }

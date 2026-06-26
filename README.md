@@ -2,30 +2,39 @@
 
 An MCP server that lets frontier models (Claude, GPT-4, etc.) delegate cost-sensitive or repetitive tasks to smaller local models via any OpenAI-compatible endpoint — Ollama, LM Studio, vLLM, or any cloud provider.
 
+Two tools cover the two main delegation patterns: **exploration** (understanding a codebase) and **generation** (writing code or content). Each can be routed to a different model — a lighter model for reading, a stronger one for writing.
+
 ## Tools
 
-### `explore_files`
-
-Walks a directory and returns an LLM-friendly view of its contents. Uses [ripgrep](https://github.com/BurntSushi/ripgrep) when available, falls back to `grep`.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `path` | string | required | Directory to explore |
-| `query` | string | — | Search for content (uses rg/grep). Returns matching lines instead of full file contents. |
-| `file_pattern` | string | — | Filter files, e.g. `"*.ts"` or `"*.md"` |
-| `max_depth` | number | `5` | Max directory depth |
-| `max_file_size_kb` | number | `100` | Skip files larger than this |
-
-### `run_task`
-
-Sends a task to a model via an OpenAI-compatible endpoint and returns the response.
+Both tools share the same parameter shape and run the same agentic loop: when `path` is provided the model receives a directory tree upfront, then calls `explore_files` and `read_file` as needed before answering.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `task` | string | required | The prompt or task |
+| `path` | string | — | Root directory to pre-map. The model receives a directory tree and can explore deeper via tool calls. |
 | `system_prompt` | string | — | Optional system context |
-| `agent` | string | — | Named agent from config. Uses `default` when omitted. |
+| `agent` | string | — | Named agent from config. Falls back to the tool-specific default in `config.tools`, then the global `default`. |
 | `max_tokens` | number | — | Override max tokens for this call |
+| `max_iterations` | number | `10` | Maximum agentic loop iterations before forcing a final answer |
+
+### `explore_task`
+
+Explore a codebase or file tree to answer questions, understand structure, trace logic, or summarize what exists. Use this for analysis, Q&A, and understanding — not for generating new code.
+
+### `run_task`
+
+Generate code, draft content, or implement changes. Use this for writing, editing, and implementing — not for open-ended exploration.
+
+### Two-tool workflow
+
+A common pattern is to chain the tools — explore first, then draft from the findings:
+
+```
+1. explore_task(task="summarize the auth flow", path="/app/src") → findings
+2. run_task(task="refactor auth.ts based on these findings", context=<findings>)
+```
+
+Route `explore_task` to a fast/cheap model and `run_task` to a stronger coder model via the `tools` config section (see below).
 
 ## Configuration
 
@@ -54,11 +63,17 @@ You can also point to a config file explicitly with the `LOCALLY_CONFIG` env var
       "model": "gpt-4o-mini",
       "apiKey": "sk-..."
     }
+  },
+  "tools": {
+    "explore": { "agent": "summarizer" },
+    "run": { "agent": "coder" }
   }
 }
 ```
 
 Agent configs are **merged on top of `default`** — only specify what differs. The `apiKey` can be left empty for local endpoints that don't require one.
+
+The optional `tools` section sets per-tool default agents. `explore_task` falls back to `tools.explore.agent` and `run_task` falls back to `tools.run.agent` when no `agent` is specified in the call. Both fall back to `default` if the `tools` section is absent.
 
 ### Environment variable fallback
 

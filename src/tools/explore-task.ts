@@ -3,7 +3,7 @@ import { runAgentLoop, AGENT_TOOLS } from "../llm/agent-loop.js";
 import { resolveAgentConfig, resolveToolAgent, type LocallyConfig } from "../config.js";
 import type { Message } from "../llm/client.js";
 
-export interface RunTaskParams {
+export interface ExploreTaskParams {
   task: string;
   path?: string;
   system_prompt?: string;
@@ -12,10 +12,10 @@ export interface RunTaskParams {
   max_iterations?: number;
 }
 
-export async function runTask(config: LocallyConfig, params: RunTaskParams): Promise<string> {
+export async function exploreTask(config: LocallyConfig, params: ExploreTaskParams): Promise<string> {
   const { task, path, system_prompt, agent, max_tokens, max_iterations } = params;
 
-  const agentConfig = resolveAgentConfig(config, resolveToolAgent(config, "run", agent));
+  const agentConfig = resolveAgentConfig(config, resolveToolAgent(config, "explore", agent));
   if (max_tokens !== undefined) {
     agentConfig.maxTokens = max_tokens;
   }

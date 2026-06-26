@@ -3,9 +3,42 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { exploreFiles } from "./tools/explore-files.js";
+import { exploreTask } from "./tools/explore-task.js";
 import { runTask } from "./tools/run-task.js";
 import type { LocallyConfig } from "./config.js";
+
+const TASK_INPUT_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    task: {
+      type: "string",
+      description: "The prompt or task to send to the model",
+    },
+    path: {
+      type: "string",
+      description:
+        "Root directory to pre-map before the agent starts. When provided, the model receives a directory tree as context and can explore deeper via tool calls.",
+    },
+    system_prompt: {
+      type: "string",
+      description: "Optional system prompt to set context",
+    },
+    agent: {
+      type: "string",
+      description:
+        'Named agent from locally.config.json to use. Falls back to the tool-specific default in config.tools, then the global default.',
+    },
+    max_tokens: {
+      type: "number",
+      description: "Override max tokens for this call",
+    },
+    max_iterations: {
+      type: "number",
+      description: "Maximum agentic loop iterations before forcing a final answer (default: 10)",
+    },
+  },
+  required: ["task"],
+};
 
 export function createServer(config: LocallyConfig): Server {
   const server = new Server(
@@ -16,64 +49,16 @@ export function createServer(config: LocallyConfig): Server {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
       {
-        name: "explore_files",
+        name: "explore_task",
         description:
-          "Walk a directory and return an LLM-friendly view of its contents. Searches with ripgrep when available, falls back to grep. Works for codebases, document folders, config directories, or any file tree.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            path: {
-              type: "string",
-              description: "Path to the directory to explore",
-            },
-            query: {
-              type: "string",
-              description:
-                "Search for content using ripgrep (or grep). When provided, returns matching lines instead of full file contents.",
-            },
-            file_pattern: {
-              type: "string",
-              description: 'Filter files by pattern, e.g. "*.ts" or "*.md"',
-            },
-            max_depth: {
-              type: "number",
-              description: "Max directory depth to traverse (default: 5)",
-            },
-            max_file_size_kb: {
-              type: "number",
-              description: "Skip files larger than this many KB (default: 100)",
-            },
-          },
-          required: ["path"],
-        },
+          "Explore a codebase or file tree to answer questions, understand structure, trace logic, or summarize what exists. The model runs agentically: it receives a directory map (when path is provided) then reads files as needed before answering. Use this for analysis, Q&A, and understanding — not for generating new code.",
+        inputSchema: TASK_INPUT_SCHEMA,
       },
       {
         name: "run_task",
         description:
-          "Delegate a task to a model via an OpenAI-compatible endpoint. Intended for small, self-contained tasks suited to local or lightweight models. Supports named agents with per-agent endpoint/model/key overrides.",
-        inputSchema: {
-          type: "object" as const,
-          properties: {
-            task: {
-              type: "string",
-              description: "The prompt or task to send to the model",
-            },
-            system_prompt: {
-              type: "string",
-              description: "Optional system prompt to set context",
-            },
-            agent: {
-              type: "string",
-              description:
-                'Named agent from locally.config.json to use. Uses the "default" config when omitted.',
-            },
-            max_tokens: {
-              type: "number",
-              description: "Override max tokens for this call",
-            },
-          },
-          required: ["task"],
-        },
+          "Generate code, draft content, or implement changes using a local model. The model runs agentically: it receives a directory map (when path is provided) then reads files as needed before producing output. Use this for writing, editing, and implementing — not for open-ended exploration.",
+        inputSchema: TASK_INPUT_SCHEMA,
       },
     ],
   }));
@@ -83,9 +68,10 @@ export function createServer(config: LocallyConfig): Server {
 
     try {
       switch (name) {
-        case "explore_files": {
-          const result = await exploreFiles(
-            args as unknown as Parameters<typeof exploreFiles>[0]
+        case "explore_task": {
+          const result = await exploreTask(
+            config,
+            args as unknown as Parameters<typeof exploreTask>[1]
           );
           return { content: [{ type: "text", text: result }] };
         }
