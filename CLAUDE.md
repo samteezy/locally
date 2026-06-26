@@ -34,3 +34,6 @@ npm run dev:http    # HTTP mode, watch
 ## Config
 
 Copy `locally.config.example.json` → `locally.config.json` to configure endpoints and agents. Falls back to `LOCALLY_BASE_URL`, `LOCALLY_MODEL`, `LOCALLY_API_KEY` env vars.
+
+## Practices
+Try to use locally yourself when working in this repo - but check its work.
