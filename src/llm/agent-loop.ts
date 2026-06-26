@@ -1,6 +1,8 @@
 import { runCompletionWithTools, type Message, type ToolDefinition } from "./client.js";
 import { exploreFiles, EXPLORE_FILES_SCHEMA } from "../tools/explore-files.js";
 import { readFile, READ_FILE_SCHEMA } from "../tools/read-file.js";
+import { writeFile, WRITE_FILE_SCHEMA } from "../tools/write-file.js";
+import { runShell, RUN_SHELL_SCHEMA } from "../tools/run-shell.js";
 import type { ResolvedAgentConfig } from "../config.js";
 
 export interface AgentTool {
@@ -32,6 +34,34 @@ export const AGENT_TOOLS: AgentTool[] = [
       },
     },
     handler: (args) => readFile(args as Parameters<typeof readFile>[0]),
+  },
+];
+
+export const RUN_AGENT_TOOLS: AgentTool[] = [
+  ...AGENT_TOOLS,
+  {
+    definition: {
+      type: "function",
+      function: {
+        name: "write_file",
+        description:
+          "Write content to a file at the given absolute path, creating parent directories as needed. Use this to create or overwrite files.",
+        parameters: WRITE_FILE_SCHEMA,
+      },
+    },
+    handler: (args) => writeFile(args as Parameters<typeof writeFile>[0]),
+  },
+  {
+    definition: {
+      type: "function",
+      function: {
+        name: "run_shell",
+        description:
+          "Run a nondestructive shell command from the allowlist. Use to check compilation errors, run tests, inspect git state, or verify output.",
+        parameters: RUN_SHELL_SCHEMA,
+      },
+    },
+    handler: (args) => runShell(args as Parameters<typeof runShell>[0]),
   },
 ];
 

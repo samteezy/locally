@@ -26,6 +26,7 @@ export interface LocallyConfig {
   tools?: {
     explore?: ToolRoutingConfig;
     run?: ToolRoutingConfig;
+    transform?: ToolRoutingConfig;
   };
 }
 
@@ -96,7 +97,7 @@ export function resolveAgentConfig(config: LocallyConfig, agentName?: string): R
 
 export function resolveToolAgent(
   config: LocallyConfig,
-  toolKey: "explore" | "run",
+  toolKey: "explore" | "run" | "transform",
   paramAgent?: string
 ): string | undefined {
   return paramAgent ?? config.tools?.[toolKey]?.agent;

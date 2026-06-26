@@ -1,5 +1,5 @@
 import { buildTree } from "./explore-files.js";
-import { runAgentLoop, AGENT_TOOLS } from "../llm/agent-loop.js";
+import { runAgentLoop, RUN_AGENT_TOOLS } from "../llm/agent-loop.js";
 import { resolveAgentConfig, resolveToolAgent, type LocallyConfig } from "../config.js";
 import type { Message } from "../llm/client.js";
 
@@ -38,5 +38,5 @@ export async function runTask(config: LocallyConfig, params: RunTaskParams): Pro
 
   messages.push({ role: "user", content: userContent });
 
-  return runAgentLoop(agentConfig, messages, AGENT_TOOLS, max_iterations);
+  return runAgentLoop(agentConfig, messages, RUN_AGENT_TOOLS, max_iterations);
 }

@@ -5,6 +5,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { exploreTask } from "./tools/explore-task.js";
 import { runTask } from "./tools/run-task.js";
+import { transform } from "./tools/transform.js";
 import type { LocallyConfig } from "./config.js";
 
 const TASK_INPUT_SCHEMA = {
@@ -57,8 +58,39 @@ export function createServer(config: LocallyConfig): Server {
       {
         name: "run_task",
         description:
-          "Generate code, draft content, or implement changes using a local model. The model runs agentically: it receives a directory map (when path is provided) then reads files as needed before producing output. Use this for writing, editing, and implementing — not for open-ended exploration.",
+          "Generate code, draft content, or implement changes using a local model. The model runs agentically: it receives a directory map (when path is provided) then reads and writes files as needed. Use this for writing, editing, and implementing — not for open-ended exploration.",
         inputSchema: TASK_INPUT_SCHEMA,
+      },
+      {
+        name: "transform",
+        description:
+          "Apply a transformation to a piece of text using a local model — summarize, reformat, translate, extract, classify, or rewrite. Single-shot: no file context, no agentic loop. Pass the text and describe what to do with it.",
+        inputSchema: {
+          type: "object" as const,
+          properties: {
+            text: {
+              type: "string",
+              description: "The input text to transform",
+            },
+            task: {
+              type: "string",
+              description: "What to do with the text (e.g. 'Summarize in one sentence', 'Extract all URLs', 'Translate to French')",
+            },
+            system_prompt: {
+              type: "string",
+              description: "Optional system prompt override",
+            },
+            agent: {
+              type: "string",
+              description: "Named agent from locally.config.json to use",
+            },
+            max_tokens: {
+              type: "number",
+              description: "Override max tokens for this call",
+            },
+          },
+          required: ["text", "task"],
+        },
       },
     ],
   }));
@@ -80,6 +112,14 @@ export function createServer(config: LocallyConfig): Server {
           const result = await runTask(
             config,
             args as unknown as Parameters<typeof runTask>[1]
+          );
+          return { content: [{ type: "text", text: result }] };
+        }
+
+        case "transform": {
+          const result = await transform(
+            config,
+            args as unknown as Parameters<typeof transform>[1]
           );
           return { content: [{ type: "text", text: result }] };
         }
