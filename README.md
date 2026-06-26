@@ -2,7 +2,7 @@
 
 An MCP server that lets frontier models (Claude, GPT-4, etc.) delegate cost-sensitive or repetitive tasks to smaller local models via any OpenAI-compatible endpoint — Ollama, LM Studio, vLLM, or any cloud provider.
 
-Three tools cover the main delegation patterns: **exploration** (understanding a codebase), **generation** (writing and editing files), and **transformation** (single-shot text operations). Each can be routed to a different model.
+Two tools cover the main delegation patterns: **exploration** (understanding a codebase) and **generation** (writing and editing files). Each can be routed to a different model.
 
 ## Tools
 
@@ -14,19 +14,7 @@ Explore a codebase or file tree to answer questions, understand structure, trace
 
 Generate code, draft content, or implement changes. The model runs an agentic loop with full read/write access: it can call `explore_files`, `read_file`, `write_file`, and `run_shell` (see below) before producing output. Use for writing, editing, and implementing.
 
-### `transform`
-
-Apply a single-shot transformation to a piece of text — summarize, reformat, translate, extract, classify, or rewrite. No file context, no agentic loop. Pass the text and describe what to do with it.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `text` | string | required | The input text to transform |
-| `task` | string | required | What to do with it (e.g. `"Summarize in one sentence"`, `"Extract all URLs"`) |
-| `system_prompt` | string | — | Optional system prompt override |
-| `agent` | string | — | Named agent from config |
-| `max_tokens` | number | — | Override max tokens for this call |
-
-### Shared parameters (`explore_task` and `run_task`)
+### Shared parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -90,15 +78,14 @@ You can also point to a config file explicitly with the `LOCALLY_CONFIG` env var
   },
   "tools": {
     "explore": { "agent": "summarizer" },
-    "run": { "agent": "coder" },
-    "transform": { "agent": "summarizer" }
+    "run": { "agent": "coder" }
   }
 }
 ```
 
 Agent configs are **merged on top of `default`** — only specify what differs. The `apiKey` can be left empty for local endpoints that don't require one.
 
-The optional `tools` section sets per-tool default agents. Each tool falls back to its entry in `tools` when no `agent` is specified in the call, then to `default` if the `tools` section is absent.
+The optional `tools` section sets per-tool default agents. `explore_task` falls back to `tools.explore.agent` and `run_task` falls back to `tools.run.agent` when no `agent` is specified in the call. Both fall back to `default` if the `tools` section is absent.
 
 ### Environment variable fallback
 

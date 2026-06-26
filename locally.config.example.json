@@ -21,7 +21,6 @@
   },
   "tools": {
     "explore": { "agent": "summarizer" },
-    "run": { "agent": "coder" },
-    "transform": { "agent": "summarizer" }
+    "run": { "agent": "coder" }
   }
 }
