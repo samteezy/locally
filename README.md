@@ -187,9 +187,4 @@ npm run build
 
 ## Supported endpoints
 
-Any OpenAI-compatible API works:
-
-- [Ollama](https://ollama.com) — `http://localhost:11434/v1`
-- [LM Studio](https://lmstudio.ai) — `http://localhost:1234/v1`
-- [vLLM](https://docs.vllm.ai) — `http://localhost:8000/v1`
-- OpenAI, Anthropic (via proxy), or any other cloud provider
+Any OpenAI-compatible API works.
