@@ -2,11 +2,31 @@
 
 An MCP server that lets frontier models (Claude, GPT-4, etc.) delegate cost-sensitive or repetitive tasks to smaller local models via any OpenAI-compatible endpoint — Ollama, LM Studio, vLLM, or any cloud provider.
 
-Two tools cover the two main delegation patterns: **exploration** (understanding a codebase) and **generation** (writing code or content). Each can be routed to a different model — a lighter model for reading, a stronger one for writing.
+Three tools cover the main delegation patterns: **exploration** (understanding a codebase), **generation** (writing and editing files), and **transformation** (single-shot text operations). Each can be routed to a different model.
 
 ## Tools
 
-Both tools share the same parameter shape and run the same agentic loop: when `path` is provided the model receives a directory tree upfront, then calls `explore_files` and `read_file` as needed before answering.
+### `explore_task`
+
+Explore a codebase or file tree to answer questions, understand structure, trace logic, or summarize what exists. Read-only — the model can call `explore_files` and `read_file` but cannot write. Use for analysis, Q&A, and understanding.
+
+### `run_task`
+
+Generate code, draft content, or implement changes. The model runs an agentic loop with full read/write access: it can call `explore_files`, `read_file`, `write_file`, and `run_shell` (see below) before producing output. Use for writing, editing, and implementing.
+
+### `transform`
+
+Apply a single-shot transformation to a piece of text — summarize, reformat, translate, extract, classify, or rewrite. No file context, no agentic loop. Pass the text and describe what to do with it.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `text` | string | required | The input text to transform |
+| `task` | string | required | What to do with it (e.g. `"Summarize in one sentence"`, `"Extract all URLs"`) |
+| `system_prompt` | string | — | Optional system prompt override |
+| `agent` | string | — | Named agent from config |
+| `max_tokens` | number | — | Override max tokens for this call |
+
+### Shared parameters (`explore_task` and `run_task`)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -17,21 +37,25 @@ Both tools share the same parameter shape and run the same agentic loop: when `p
 | `max_tokens` | number | — | Override max tokens for this call |
 | `max_iterations` | number | `10` | Maximum agentic loop iterations before forcing a final answer |
 
-### `explore_task`
+### `run_shell` allowlist
 
-Explore a codebase or file tree to answer questions, understand structure, trace logic, or summarize what exists. Use this for analysis, Q&A, and understanding — not for generating new code.
+`run_task`'s agentic loop includes a `run_shell` tool the model can use to verify its own output (compile, lint, test, inspect git state). Only the following commands are permitted:
 
-### `run_task`
+| Command | Notes |
+|---------|-------|
+| `cat` `head` `tail` `wc` `diff` `ls` `find` `stat` `echo` `pwd` | Standard read-only POSIX |
+| `grep` `rg` | Text search |
+| `git` | Subcommands: `status` `diff` `log` `show` `blame` `branch` `tag` |
+| `npm` | Subcommands: `test` `run` |
+| `tsc` `eslint` `prettier` | Linting and type checking |
 
-Generate code, draft content, or implement changes. Use this for writing, editing, and implementing — not for open-ended exploration.
+### Workflow example
 
-### Two-tool workflow
-
-A common pattern is to chain the tools — explore first, then draft from the findings:
+A common pattern: explore first, then implement from the findings:
 
 ```
 1. explore_task(task="summarize the auth flow", path="/app/src") → findings
-2. run_task(task="refactor auth.ts based on these findings", context=<findings>)
+2. run_task(task="refactor auth.ts based on these findings: <findings>", path="/app/src")
 ```
 
 Route `explore_task` to a fast/cheap model and `run_task` to a stronger coder model via the `tools` config section (see below).
@@ -66,14 +90,15 @@ You can also point to a config file explicitly with the `LOCALLY_CONFIG` env var
   },
   "tools": {
     "explore": { "agent": "summarizer" },
-    "run": { "agent": "coder" }
+    "run": { "agent": "coder" },
+    "transform": { "agent": "summarizer" }
   }
 }
 ```
 
 Agent configs are **merged on top of `default`** — only specify what differs. The `apiKey` can be left empty for local endpoints that don't require one.
 
-The optional `tools` section sets per-tool default agents. `explore_task` falls back to `tools.explore.agent` and `run_task` falls back to `tools.run.agent` when no `agent` is specified in the call. Both fall back to `default` if the `tools` section is absent.
+The optional `tools` section sets per-tool default agents. Each tool falls back to its entry in `tools` when no `agent` is specified in the call, then to `default` if the `tools` section is absent.
 
 ### Environment variable fallback
 
