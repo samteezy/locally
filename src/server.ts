@@ -57,7 +57,7 @@ export function createServer(config: LocallyConfig): Server {
       {
         name: "run_task",
         description:
-          "Generate code, draft content, or implement changes using a local model. The model runs agentically: it receives a directory map (when path is provided) then reads and writes files as needed. Use this for writing, editing, and implementing — not for open-ended exploration.",
+          "Generate code, draft content, or implement changes using a local model. The model runs agentically: it receives a directory map (when path is provided) then reads and writes files as needed. Use this for writing, editing, and implementing — not for open-ended exploration. Provide project-specific best practices in the task prompt.",
         inputSchema: TASK_INPUT_SCHEMA,
       },
     ],
