@@ -16,6 +16,14 @@ Explore a codebase or file tree to answer questions, understand structure, trace
 
 Generate code, draft content, or implement changes. The model runs an agentic loop with full read/write access: it can call `explore_files`, `read_file`, `write_file`, and `run_shell` (see below) before producing output. Use for writing, editing, and implementing.
 
+### `usage_report`
+
+Report how much work has been offloaded to locally since the server started: the number of tasks handled and the approximate tokens processed (input) and generated (output) locally. Takes no arguments. Use it to see how much has been kept off the frontier model.
+
+Note that each `explore_task` and `run_task` result also ends with a one-line provenance footer (model used, iterations, and tokens processed/generated); `usage_report` gives the running cumulative total across all invocations. Counters reset when the server process restarts.
+
+Token counts depend on the endpoint returning a `usage` block (`prompt_tokens` / `completion_tokens`) in its responses. Most OpenAI-compatible servers do, but some omit it — entirely or just `prompt_tokens` — under certain configs or when streaming. When usage isn't reported the footer reads "token usage not reported by endpoint" and the affected counts contribute `0` to the cumulative total; the invocation/task count is always accurate.
+
 ### Shared parameters
 
 | Parameter | Type | Default | Description |
