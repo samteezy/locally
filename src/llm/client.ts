@@ -31,9 +31,16 @@ export interface Message {
   tool_call_id?: string;
 }
 
+export interface Usage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 export interface AssistantTurn {
   content: string | null;
   tool_calls?: ToolCall[];
+  usage?: Usage;
 }
 
 interface CompletionResponse {
@@ -43,6 +50,11 @@ interface CompletionResponse {
       tool_calls?: ToolCall[];
     };
   }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
 }
 
 export async function runCompletionWithTools(
@@ -119,6 +131,13 @@ export async function runCompletionWithTools(
   return {
     content: message.content ?? null,
     tool_calls: message.tool_calls,
+    usage: data.usage
+      ? {
+          promptTokens: data.usage.prompt_tokens ?? 0,
+          completionTokens: data.usage.completion_tokens ?? 0,
+          totalTokens: data.usage.total_tokens ?? 0,
+        }
+      : undefined,
   };
 }
 

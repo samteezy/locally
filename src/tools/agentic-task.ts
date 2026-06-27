@@ -1,5 +1,5 @@
 import { buildTree, exploreFiles, IGNORED_DIRS, type ExploreFilesParams } from "./explore-files.js";
-import { runAgentLoop, type AgentTool } from "../llm/agent-loop.js";
+import { runAgentLoop, type AgentTool, type AgentRunResult } from "../llm/agent-loop.js";
 import { resolveAgentConfig, resolveToolAgent, type LocallyConfig } from "../config.js";
 import type { Message } from "../llm/client.js";
 
@@ -18,7 +18,7 @@ export async function runAgenticTask(
   params: AgenticTaskParams,
   toolKey: "explore" | "run",
   tools: AgentTool[]
-): Promise<string> {
+): Promise<AgentRunResult> {
   const { task, path, system_prompt, agent, max_tokens, max_iterations, onProgress } = params;
 
   const agentConfig = resolveAgentConfig(config, resolveToolAgent(config, toolKey, agent));
