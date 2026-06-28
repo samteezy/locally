@@ -4,22 +4,25 @@ import type { AgentRunResult } from "./llm/agent-loop.js";
 // tool calls but reset when the process restarts. In stdio mode the process
 // serves one client, so this is a per-session total; in HTTP mode it spans all
 // clients, so usage_report labels it "since server start" rather than "session".
+let promptTokens = 0;
 let completionTokens = 0;
 let taskCount = 0;
 
 export interface SessionStats {
   taskCount: number;
+  promptTokens: number;
   completionTokens: number;
 }
 
 /** Reset counters. Exposed for tests. */
 export function resetUsage(): void {
+  promptTokens = 0;
   completionTokens = 0;
   taskCount = 0;
 }
 
 export function getSessionStats(): SessionStats {
-  return { taskCount, completionTokens };
+  return { taskCount, promptTokens, completionTokens };
 }
 
 function fmtTokens(n: number): string {
@@ -33,13 +36,14 @@ function fmtTokens(n: number): string {
  * how much it generated — the cumulative tally lives in the usage_report tool.
  */
 export function withUsageFooter(result: AgentRunResult): string {
+  promptTokens += result.promptTokens;
   completionTokens += result.completionTokens;
   taskCount += 1;
 
   const iterLabel = `${result.iterations} iter${result.iterations === 1 ? "" : "s"}`;
   const tokenPart =
-    result.completionTokens > 0
-      ? `~${fmtTokens(result.completionTokens)} tokens generated`
+    result.promptTokens > 0 || result.completionTokens > 0
+      ? `~${fmtTokens(result.promptTokens)} processed · ~${fmtTokens(result.completionTokens)} generated`
       : "token usage not reported by endpoint";
 
   return `${result.text}\n\n---\n_locally · ${result.model} · ${iterLabel} · ${tokenPart}_`;
@@ -47,10 +51,10 @@ export function withUsageFooter(result: AgentRunResult): string {
 
 /** One-line cumulative summary for the usage_report tool. */
 export function formatUsageReport(): string {
-  const { taskCount, completionTokens } = getSessionStats();
+  const { taskCount, promptTokens, completionTokens } = getSessionStats();
   if (taskCount === 0) {
     return "locally has not handled any tasks since this server started.";
   }
   const tasks = `${taskCount} task${taskCount === 1 ? "" : "s"}`;
-  return `locally has handled ${tasks} since this server started, generating ~${fmtTokens(completionTokens)} tokens locally and keeping them off the frontier model.`;
+  return `locally has handled ${tasks} since this server started, processing ~${fmtTokens(promptTokens)} tokens and generating ~${fmtTokens(completionTokens)} tokens locally — keeping ~${fmtTokens(promptTokens + completionTokens)} tokens off the frontier model.`;
 }

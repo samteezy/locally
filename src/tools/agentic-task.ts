@@ -11,6 +11,11 @@ export interface AgenticTaskParams {
   max_tokens?: number;
   max_iterations?: number;
   onProgress?: (message: string) => void;
+  /**
+   * Tool-supplied default system prompt (e.g. the Explore contract). Composed ahead of the
+   * caller's `system_prompt` rather than replaced by it — both are included when present.
+   */
+  baseSystemPrompt?: string;
 }
 
 export async function runAgenticTask(
@@ -19,7 +24,7 @@ export async function runAgenticTask(
   toolKey: "explore" | "run",
   tools: AgentTool[]
 ): Promise<AgentRunResult> {
-  const { task, path, system_prompt, agent, max_tokens, max_iterations, onProgress } = params;
+  const { task, path, system_prompt, agent, max_tokens, max_iterations, baseSystemPrompt, onProgress } = params;
 
   const agentConfig = resolveAgentConfig(config, resolveToolAgent(config, toolKey, agent));
   if (max_tokens !== undefined) {
@@ -31,18 +36,26 @@ export async function runAgenticTask(
 
   const messages: Message[] = [];
 
-  if (system_prompt) {
-    messages.push({ role: "system", content: system_prompt });
+  // Tool-supplied base prompt first (e.g. the Explore contract), then the caller's
+  // optional system_prompt — both are kept, not one replacing the other.
+  const systemContent = [baseSystemPrompt, system_prompt].filter(Boolean).join("\n\n");
+  if (systemContent) {
+    messages.push({ role: "system", content: systemContent });
   }
 
   // Pre-seed with a directory tree injected into the user message.
   // Tree only (no file contents) keeps the context small; the agent reads specific
   // files via read_file tool calls. Injected into the user turn rather than system
   // to avoid servers that strip system messages (e.g. llama-swap with Gemma).
+  // Fall back to the process cwd so callers get a map even without an explicit path
+  // (matches the native Explore agent, which needs no path).
   let userContent = task;
-  if (path) {
-    const tree = await buildTree(path, 5, ignoreDirs);
-    userContent = `Here is the directory structure of ${path}:\n\n.\n${tree}\n\n---\n\n${task}`;
+  const treeRoot = path ?? process.cwd();
+  try {
+    const tree = await buildTree(treeRoot, 5, ignoreDirs);
+    userContent = `Here is the directory structure of ${treeRoot}:\n\n.\n${tree}\n\n---\n\n${task}`;
+  } catch {
+    // No usable tree (e.g. unreadable cwd) — fall back to the bare task.
   }
 
   messages.push({ role: "user", content: userContent });
