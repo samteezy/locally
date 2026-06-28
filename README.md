@@ -34,7 +34,7 @@ Token counts depend on the endpoint returning a `usage` block (`prompt_tokens` /
 | `path` | string | cwd | Root directory to pre-map. The model receives a directory tree and can explore deeper via tool calls. Defaults to the working directory when omitted. |
 | `system_prompt` | string | — | Optional system context |
 | `agent` | string | — | Named agent from config. Falls back to the tool-specific default in `config.tools`, then the global `default`. |
-| `max_tokens` | number | — | Override max tokens for this call |
+| `max_tokens` | number | config `maxTokens` | Override max completion tokens for this call (overrides the agent's `maxTokens`). |
 | `max_iterations` | number | `10` | Maximum agentic loop iterations before forcing a final answer |
 | `breadth` | string | `medium` | `explore_task` only — `"medium"` or `"very thorough"`. Tunes search width and the default iteration budget. |
 
@@ -78,6 +78,7 @@ You can also point to a config file explicitly with the `LOCALLY_CONFIG` env var
     "baseUrl": "http://localhost:11434/v1",
     "model": "qwen3:8b",
     "apiKey": "",
+    "maxTokens": 4096,
     "timeout": 600
   },
   "agents": {
@@ -93,13 +94,18 @@ You can also point to a config file explicitly with the `LOCALLY_CONFIG` env var
   "tools": {
     "explore": { "agent": "summarizer" },
     "run": { "agent": "coder" }
-  }
+  },
+  "ignorePatterns": ["*.log", "tmp"]
 }
 ```
 
 Agent configs are **merged on top of `default`** — only specify what differs. The `apiKey` can be left empty for local endpoints that don't require one.
 
 The optional `timeout` field (seconds, default `600`) bounds each request to the model endpoint. Raise it for slow local models or large `very thorough` sweeps; a request that exceeds it returns a `timeout` error. `timeout` can be set on `default` or per-agent.
+
+The optional `maxTokens` field caps the completion length, sent to the endpoint as `max_tokens`. Like the other fields it can be set on `default` or per-agent (and is merged the same way). The per-call [`max_tokens` parameter](#shared-parameters) overrides it for a single call. Omit it to let the endpoint use its own default.
+
+The optional top-level `ignorePatterns` array lists extra directory names or glob patterns to exclude from the directory tree and file exploration. It is merged on top of the built-in ignore list (`node_modules`, `.git`, `dist`, `build`, `.next`, `.nuxt`, `__pycache__`, `.cache`, `.turbo`, `coverage`, `.nyc_output`).
 
 > **Config is read once at server startup.** After editing `locally.config.json`, **reconnect the locally MCP server** (e.g. `/mcp` in Claude Code) for changes to take effect — a running server keeps the config it loaded at launch.
 

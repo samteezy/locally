@@ -8,6 +8,7 @@
     "baseUrl": "http://localhost:11434/v1",
     "model": "qwen3:8b",
     "apiKey": "",
+    "maxTokens": 4096,
     "timeout": 600
   },
   "agents": {
@@ -23,5 +24,6 @@
   "tools": {
     "explore": { "agent": "summarizer" },
     "run": { "agent": "coder" }
-  }
+  },
+  "ignorePatterns": ["*.log", "tmp"]
 }
