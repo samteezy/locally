@@ -1,7 +1,12 @@
 {
-  "name": "locally",
+  "name": "locally-mcp",
   "version": "0.1.0",
   "description": "MCP server for delegating tasks to local or remote models via OpenAI-compatible endpoints",
+  "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/samteezy/locally.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
@@ -17,7 +22,8 @@
     "dev": "tsx watch src/index.ts",
     "dev:http": "LOCALLY_TRANSPORT=http tsx watch src/index.ts",
     "build": "tsup",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.1"

@@ -25,5 +25,6 @@
     "explore": { "agent": "summarizer" },
     "run": { "agent": "coder" }
   },
-  "ignorePatterns": ["*.log", "tmp"]
+  "ignorePatterns": ["*.log", "tmp"],
+  "allowedRoots": ["/abs/path/to/project", "/abs/path/to/another"]
 }
