@@ -1,7 +1,12 @@
 {
-  "name": "locally",
+  "name": "locally-mcp",
   "version": "0.1.0",
   "description": "MCP server for delegating tasks to local or remote models via OpenAI-compatible endpoints",
+  "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/samteezy/locally.git"
+  },
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
