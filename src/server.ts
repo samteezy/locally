@@ -6,12 +6,13 @@ import {
 import { exploreTask } from "./tools/explore-task.js";
 import { runTask } from "./tools/run-task.js";
 import { withUsageFooter, formatUsageReport } from "./usage.js";
+import { formatLocallyError } from "./llm/errors.js";
 import type { LocallyConfig } from "./config.js";
 
 const SERVER_INSTRUCTIONS = `locally is your assistant's assistant. It runs smaller models on local (or cheap) endpoints, so it costs little or nothing to use.
 
 Before doing low-stakes, repetitive, or mechanical work yourself, delegate it here to keep it off the frontier model:
-- Drafting commit messages, PR descriptions, and changelog entries
+- Broad fan-out codebase searches — "where is X", how something works, naming-convention sweeps — the situations you'd otherwise spawn an Explore subagent for (explore_task). It returns a conclusion with file:line citations, not file dumps.
 - Answering questions about a codebase or summarizing what exists (explore_task)
 - Boilerplate, scaffolding, and routine edits (run_task)
 
@@ -52,6 +53,25 @@ const TASK_INPUT_SCHEMA = {
   required: ["task"],
 };
 
+const EXPLORE_INPUT_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    ...TASK_INPUT_SCHEMA.properties,
+    task: {
+      type: "string",
+      description:
+        "What to find or understand, in natural language (e.g. \"where is the agentic loop and how does result caching work?\").",
+    },
+    breadth: {
+      type: "string",
+      enum: ["medium", "very thorough"],
+      description:
+        "How widely to search. \"medium\" checks the most likely locations; \"very thorough\" sweeps multiple locations and naming conventions across the tree. Defaults to \"medium\".",
+    },
+  },
+  required: ["task"],
+};
+
 export function createServer(config: LocallyConfig): Server {
 
   const server = new Server(
@@ -64,8 +84,8 @@ export function createServer(config: LocallyConfig): Server {
       {
         name: "explore_task",
         description:
-          "Explore a codebase or file tree to answer questions, understand structure, trace logic, or summarize what exists. The model runs agentically: it receives a directory map (when path is provided) then reads files as needed before answering. Use this for analysis, Q&A, and understanding — not for generating new code.",
-        inputSchema: TASK_INPUT_SCHEMA,
+          "Read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. Sweeps many files, directories, and naming conventions and returns a conclusion with file:line citations, not file dumps. Reads excerpts to locate code; it does not review or audit it. The model runs agentically: it receives a directory map (the given path, else the working directory) then reads files as needed. Set breadth (\"medium\" / \"very thorough\"). Use for analysis, Q&A, and understanding — not for generating code.",
+        inputSchema: EXPLORE_INPUT_SCHEMA,
       },
       {
         name: "run_task",
@@ -115,9 +135,7 @@ export function createServer(config: LocallyConfig): Server {
       }
     } catch (err) {
       return {
-        content: [
-          { type: "text", text: err instanceof Error ? err.message : String(err) },
-        ],
+        content: [{ type: "text", text: formatLocallyError(err) }],
         isError: true,
       };
     }

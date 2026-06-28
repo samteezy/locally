@@ -1,9 +1,11 @@
+import { LocallyError } from "./errors.js";
+
 export interface LlmConfig {
   baseUrl: string;
   model: string;
   apiKey: string;
   maxTokens?: number;
-  timeout?: number; // seconds; default 120
+  timeout?: number; // seconds; default 600
 }
 
 export interface ToolDefinition {
@@ -63,7 +65,12 @@ export async function runCompletionWithTools(
   tools?: ToolDefinition[]
 ): Promise<AssistantTurn> {
   if (!config.model) {
-    throw new Error("No model configured. Set LOCALLY_MODEL or specify a model in locally.config.json.");
+    throw new LocallyError("No model configured.", {
+      category: "config",
+      origin: "local",
+      retriable: false,
+      fix: "set a model via LOCALLY_MODEL or the \"model\" field in locally.config.json, then reconnect the locally MCP server (config is read once at startup).",
+    });
   }
 
   const url = `${config.baseUrl.replace(/\/$/, "")}/chat/completions`;
@@ -90,7 +97,7 @@ export async function runCompletionWithTools(
     headers["Authorization"] = `Bearer ${config.apiKey}`;
   }
 
-  const timeoutSecs = config.timeout ?? 120;
+  const timeoutSecs = config.timeout ?? 600;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutSecs * 1000);
 
@@ -104,10 +111,21 @@ export async function runCompletionWithTools(
     });
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
-      throw new Error(`LLM request timed out after ${timeoutSecs}s — increase timeout in config`);
+      throw new LocallyError(`LLM request timed out after ${timeoutSecs}s.`, {
+        category: "timeout",
+        origin: "local",
+        retriable: true,
+        fix: "raise \"timeout\" (seconds) in locally.config.json, then reconnect the locally MCP server (config is read once at startup). Or pass a smaller task / lower max_iterations.",
+      });
     }
-    throw new Error(
-      `Failed to reach LLM endpoint at ${url}: ${err instanceof Error ? err.message : String(err)}`
+    throw new LocallyError(
+      `Failed to reach LLM endpoint at ${url}: ${err instanceof Error ? err.message : String(err)}`,
+      {
+        category: "upstream",
+        origin: "upstream",
+        retriable: true,
+        fix: `verify the model endpoint at ${url} is running and reachable — this is the endpoint, not locally.`,
+      }
     );
   } finally {
     clearTimeout(timer);
@@ -115,17 +133,36 @@ export async function runCompletionWithTools(
 
   if (!response.ok) {
     if (response.status === 401 || response.status === 403) {
-      throw new Error(`LLM endpoint authentication failed (HTTP ${response.status}) — check your API key in locally.config.json or LOCALLY_API_KEY env var`);
+      throw new LocallyError(`LLM endpoint authentication failed (HTTP ${response.status}).`, {
+        category: "config",
+        origin: "local",
+        retriable: false,
+        fix: "check your API key in locally.config.json (\"apiKey\") or the LOCALLY_API_KEY env var, then reconnect the locally MCP server.",
+      });
     }
     const text = await response.text().catch(() => "");
-    throw new Error(`LLM endpoint returned ${response.status} ${response.statusText}: ${text}`);
+    // 5xx and 429 are transient on the endpoint side; other 4xx usually mean a bad request (e.g. unknown model).
+    const transient = response.status >= 500 || response.status === 429;
+    throw new LocallyError(`LLM endpoint returned ${response.status} ${response.statusText}: ${text}`, {
+      category: "upstream",
+      origin: "upstream",
+      retriable: transient,
+      fix: transient
+        ? "the model endpoint is overloaded or erroring (5xx/429) — wait and retry; this is the endpoint, not locally."
+        : "the model endpoint rejected the request — verify the configured model exists on the endpoint; this is the endpoint, not locally.",
+    });
   }
 
   const data = (await response.json()) as CompletionResponse;
   const message = data.choices?.[0]?.message;
 
   if (!message) {
-    throw new Error(`Unexpected response format from LLM endpoint: ${JSON.stringify(data)}`);
+    throw new LocallyError(`Unexpected response format from LLM endpoint: ${JSON.stringify(data)}`, {
+      category: "upstream",
+      origin: "upstream",
+      retriable: false,
+      fix: "the endpoint returned a response that is not OpenAI chat-completions shaped — verify baseUrl points at an OpenAI-compatible /v1 endpoint.",
+    });
   }
 
   return {

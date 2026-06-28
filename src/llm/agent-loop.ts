@@ -1,4 +1,5 @@
 import { runCompletionWithTools, type Message, type ToolDefinition } from "./client.js";
+import { LocallyError } from "./errors.js";
 import { exploreFiles, EXPLORE_FILES_SCHEMA } from "../tools/explore-files.js";
 import { readFile, READ_FILE_SCHEMA } from "../tools/read-file.js";
 import { writeFile, WRITE_FILE_SCHEMA } from "../tools/write-file.js";
@@ -114,11 +115,28 @@ export async function runAgentLoop(
 
   let iterations = 0;
 
+  // On a completion failure, annotate the error with how far we got so the caller knows
+  // whether any local work happened before the failure. Preserves the LocallyError category.
+  const augmentProgress = (err: unknown): unknown => {
+    if (err instanceof LocallyError && (iterations > 1 || completionTokens > 0)) {
+      return new LocallyError(
+        `${err.message} (failed after ${iterations} iteration(s), ${completionTokens} tokens generated locally so far)`,
+        { category: err.category, origin: err.origin, retriable: err.retriable, fix: err.fix }
+      );
+    }
+    return err;
+  };
+
   while (iterations < maxIterations) {
     iterations++;
     onProgress?.(`[iteration ${iterations}/${maxIterations}]`);
 
-    const turn = await runCompletionWithTools(config, messages, toolDefs);
+    let turn;
+    try {
+      turn = await runCompletionWithTools(config, messages, toolDefs);
+    } catch (err) {
+      throw augmentProgress(err);
+    }
     promptTokens += turn.usage?.promptTokens ?? 0;
     completionTokens += turn.usage?.completionTokens ?? 0;
 
@@ -179,11 +197,24 @@ export async function runAgentLoop(
   }
 
   // Max iterations reached — call without tools to force a final text answer
-  const finalTurn = await runCompletionWithTools(config, messages);
+  let finalTurn;
+  try {
+    finalTurn = await runCompletionWithTools(config, messages);
+  } catch (err) {
+    throw augmentProgress(err);
+  }
   promptTokens += finalTurn.usage?.promptTokens ?? 0;
   completionTokens += finalTurn.usage?.completionTokens ?? 0;
   if (typeof finalTurn.content !== "string") {
-    throw new Error(`Agent exceeded ${maxIterations} iterations and the model returned no content.`);
+    throw new LocallyError(
+      `Agent exceeded ${maxIterations} iterations and the model returned no final content.`,
+      {
+        category: "constraint",
+        origin: "local",
+        retriable: true,
+        fix: "raise \"max_iterations\" on the call, or narrow the task so the model finishes sooner.",
+      }
+    );
   }
   return { text: finalTurn.content, model: config.model, promptTokens, completionTokens, iterations: iterations + 1 };
 }

@@ -7,7 +7,8 @@
   "default": {
     "baseUrl": "http://localhost:11434/v1",
     "model": "qwen3:8b",
-    "apiKey": ""
+    "apiKey": "",
+    "timeout": 600
   },
   "agents": {
     "coder": {

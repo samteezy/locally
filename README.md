@@ -10,7 +10,9 @@ locally is an MCP server that connects to any OpenAI-compatible endpoint — lla
 
 ### `explore_task`
 
-Explore a codebase or file tree to answer questions, understand structure, trace logic, or summarize what exists. Read-only — the model can call `explore_files` and `read_file` but cannot write. Use for analysis, Q&A, and understanding.
+A read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. It sweeps many files, directories, and naming conventions and returns a conclusion with `file:line` citations rather than file dumps; it reads excerpts to locate code, not to review or audit it. Read-only — the model can call `explore_files` and `read_file` but cannot write. Use for analysis, Q&A, and understanding.
+
+Set `breadth` to tune how widely it searches: `"medium"` (default) checks the most likely locations; `"very thorough"` sweeps multiple locations and naming conventions across the tree. Breadth also raises the default iteration budget (`medium` → 8, `very thorough` → 20); an explicit `max_iterations` overrides it. When `path` is omitted the working directory is mapped, so a path is optional.
 
 ### `run_task`
 
@@ -29,11 +31,12 @@ Token counts depend on the endpoint returning a `usage` block (`prompt_tokens` /
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `task` | string | required | The prompt or task |
-| `path` | string | — | Root directory to pre-map. The model receives a directory tree and can explore deeper via tool calls. |
+| `path` | string | cwd | Root directory to pre-map. The model receives a directory tree and can explore deeper via tool calls. Defaults to the working directory when omitted. |
 | `system_prompt` | string | — | Optional system context |
 | `agent` | string | — | Named agent from config. Falls back to the tool-specific default in `config.tools`, then the global `default`. |
 | `max_tokens` | number | — | Override max tokens for this call |
 | `max_iterations` | number | `10` | Maximum agentic loop iterations before forcing a final answer |
+| `breadth` | string | `medium` | `explore_task` only — `"medium"` or `"very thorough"`. Tunes search width and the default iteration budget. |
 
 ### `run_shell` allowlist
 
@@ -74,7 +77,8 @@ You can also point to a config file explicitly with the `LOCALLY_CONFIG` env var
   "default": {
     "baseUrl": "http://localhost:11434/v1",
     "model": "qwen3:8b",
-    "apiKey": ""
+    "apiKey": "",
+    "timeout": 600
   },
   "agents": {
     "coder": {
@@ -94,6 +98,23 @@ You can also point to a config file explicitly with the `LOCALLY_CONFIG` env var
 ```
 
 Agent configs are **merged on top of `default`** — only specify what differs. The `apiKey` can be left empty for local endpoints that don't require one.
+
+The optional `timeout` field (seconds, default `600`) bounds each request to the model endpoint. Raise it for slow local models or large `very thorough` sweeps; a request that exceeds it returns a `timeout` error. `timeout` can be set on `default` or per-agent.
+
+> **Config is read once at server startup.** After editing `locally.config.json`, **reconnect the locally MCP server** (e.g. `/mcp` in Claude Code) for changes to take effect — a running server keeps the config it loaded at launch.
+
+### Error reporting
+
+Tool failures come back as `isError` results tagged with a category so the calling agent can tell a configurable limit from an endpoint failure:
+
+| Category | Origin | Meaning | What to do |
+|----------|--------|---------|------------|
+| `timeout` | local | Request exceeded the configured `timeout`. | Raise `timeout` and reconnect, or send a smaller task / lower `max_iterations`. |
+| `config` | local | Misconfiguration — no model set, or auth (401/403) failed. | Fix model/`apiKey` in config or env, then reconnect. |
+| `constraint` | local | Hit `max_iterations` without a final answer. | Raise `max_iterations`, or narrow the task. |
+| `upstream` | upstream | The model endpoint failed — unreachable, 4xx/5xx, or a malformed response. | Not locally's fault; verify the endpoint/model is up. Retriable for 5xx/429. |
+
+The error text leads with `[locally error: <category> — <origin>]` and ends with a concrete `Fix:` line.
 
 The optional `tools` section sets per-tool default agents. `explore_task` falls back to `tools.explore.agent` and `run_task` falls back to `tools.run.agent` when no `agent` is specified in the call. Both fall back to `default` if the `tools` section is absent.
 
