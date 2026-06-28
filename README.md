@@ -6,6 +6,42 @@ Frontier models are expensive. locally runs on your own hardware for free — so
 ---
 locally is an MCP server that connects to any OpenAI-compatible endpoint — llama.cpp, LM Studio, vLLM, or even (if you really want) a different cloud provider. Two tools cover the main delegation patterns: **exploration** (understanding a codebase) and **generation** (writing and editing files). Each can be routed to a different model if desired.
 
+## Quickstart
+
+Assuming you already have an OpenAI-compatible endpoint serving a model — e.g. `deepreinforce-ai/Ornith-1.0-9B` (a coding finetune of Qwen 3.5 9B) running under Ollama, llama.cpp, LM Studio, or vLLM — you can be delegating to it in three steps. No config file needed; everything goes in your MCP client's settings.
+
+**1. Get the server.** Clone and build:
+
+```bash
+git clone https://github.com/samteezy/locally
+cd locally && npm install && npm run build
+```
+
+(Once published to npm you'll be able to skip this and use `npx locally-mcp` directly — see step 2.)
+
+**2. Point your MCP client at your model.** Add this to your Claude Code or Claude Desktop MCP config, pointing `command`/`args` at the build from step 1 and setting two env vars:
+
+```json
+{
+  "mcpServers": {
+    "locally": {
+      "command": "node",
+      "args": ["/path/to/locally/dist/index.js"],
+      "env": {
+        "LOCALLY_BASE_URL": "http://localhost:11434/v1",
+        "LOCALLY_MODEL": "deepreinforce-ai/Ornith-1.0-9B"
+      }
+    }
+  }
+}
+```
+
+`LOCALLY_API_KEY` is optional for local endpoints that don't require auth. `LOCALLY_BASE_URL` defaults to the Ollama path (`http://localhost:11434/v1`), so you can omit it if that's where your endpoint lives. Once `locally-mcp` is on npm, replace `command`/`args` with `"command": "npx", "args": ["locally-mcp"]`.
+
+**3. Verify.** Reconnect the server (`/mcp` in Claude Code) and try a call — point `explore_task` at a repo and check the result. Each result ends with a provenance footer showing the model used and tokens generated locally, so you can confirm the work actually ran on your endpoint.
+
+That's the whole happy path. Want multiple models, route explore vs. run to different models, or sandbox file access? See [Configuration](#configuration).
+
 ## Tools
 
 ### `explore_task`
@@ -67,6 +103,25 @@ Copy `locally.config.example.json` to `locally.config.json` (picked up from the 
 
 You can also point to a config file explicitly with the `LOCALLY_CONFIG` env var.
 
+### Where config lives: client settings vs config file
+
+There are two places config can come from, and they're meant for different things:
+
+- **Your MCP client's settings** (the `env`/`args` of the server entry) can only carry a flat set of env vars — perfect for the simple, single-endpoint setup shown in the [Quickstart](#quickstart). No file required.
+- **`locally.config.json`** is the home for anything *structured*: multiple named agents, per-tool routing, and sandbox roots. These can't be expressed as flat env vars.
+
+| Config | Client `env`/args | Config file |
+|--------|-------------------|-------------|
+| `baseUrl` / `model` / `apiKey` | ✅ env | ✅ |
+| transport `mode` / `port` / `host` | ✅ env / arg | ✅ |
+| `timeout`, `maxTokens` | ❌ (file / per-call only) | ✅ |
+| `agents`, `tools` routing | ❌ (nested) | ✅ |
+| `allowedRoots`, `ignorePatterns` | ❌ (array) | ✅ |
+
+The clean way to combine them is `LOCALLY_CONFIG`: put that one env var in your client settings to name *which* config file to load, and keep the rich content in the file (see the [example under Usage](#local-mcp-stdio)).
+
+> **HTTP transport is different.** In `http` mode the server is a standalone process your client merely connects to by URL — it never launches it — so client settings can't configure it. Use a config file or set env vars where the server process runs.
+
 ```json
 {
   "transport": {
@@ -126,7 +181,7 @@ The optional `tools` section sets per-tool default agents. `explore_task` falls 
 
 ### Environment variable fallback
 
-If no config file is found, these env vars are used:
+These env vars are read as a **per-field fallback** — used both when no config file is found *and* when a file exists but omits that field:
 
 | Variable | Default |
 |----------|---------|
@@ -136,6 +191,8 @@ If no config file is found, these env vars are used:
 | `LOCALLY_TRANSPORT` | `stdio` |
 | `LOCALLY_PORT` | `3000` |
 | `LOCALLY_HOST` | `127.0.0.1` |
+
+`timeout` and `maxTokens` are the exception: they have no env var and can only be set in the config file (or, for `maxTokens`, per call via the [`max_tokens` parameter](#shared-parameters)).
 
 ## Installation
 
