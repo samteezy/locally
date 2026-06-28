@@ -8,25 +8,16 @@ locally is an MCP server that connects to any OpenAI-compatible endpoint — lla
 
 ## Quickstart
 
-Assuming you already have an OpenAI-compatible endpoint serving a model — e.g. `deepreinforce-ai/Ornith-1.0-9B` (a coding finetune of Qwen 3.5 9B) running under Ollama, llama.cpp, LM Studio, or vLLM — you can be delegating to it in three steps. No config file needed; everything goes in your MCP client's settings.
+Assuming you already have an OpenAI-compatible endpoint serving a model — e.g. `deepreinforce-ai/Ornith-1.0-9B` (a coding finetune of Qwen 3.5 9B) running under Ollama, llama.cpp, LM Studio, or vLLM — you can be delegating to it in two steps. No install and no config file needed; everything goes in your MCP client's settings.
 
-**1. Get the server.** Clone and build:
-
-```bash
-git clone https://github.com/samteezy/locally
-cd locally && npm install && npm run build
-```
-
-(Once published to npm you'll be able to skip this and use `npx locally-mcp` directly — see step 2.)
-
-**2. Point your MCP client at your model.** Add this to your Claude Code or Claude Desktop MCP config, pointing `command`/`args` at the build from step 1 and setting two env vars:
+**1. Point your MCP client at your model.** Add this to your Claude Code or Claude Desktop MCP config — `npx` fetches and runs the server, and the two env vars tell it where your model lives:
 
 ```json
 {
   "mcpServers": {
     "locally": {
-      "command": "node",
-      "args": ["/path/to/locally/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "locally-mcp"],
       "env": {
         "LOCALLY_BASE_URL": "http://localhost:11434/v1",
         "LOCALLY_MODEL": "deepreinforce-ai/Ornith-1.0-9B"
@@ -36,9 +27,9 @@ cd locally && npm install && npm run build
 }
 ```
 
-`LOCALLY_API_KEY` is optional for local endpoints that don't require auth. `LOCALLY_BASE_URL` defaults to the Ollama path (`http://localhost:11434/v1`), so you can omit it if that's where your endpoint lives. Once `locally-mcp` is on npm, replace `command`/`args` with `"command": "npx", "args": ["locally-mcp"]`.
+`LOCALLY_API_KEY` is optional for local endpoints that don't require auth. `LOCALLY_BASE_URL` defaults to the Ollama path (`http://localhost:11434/v1`), so you can omit it if that's where your endpoint lives. Prefer to run from source? Clone the repo, `npm install && npm run build`, and use `"command": "node", "args": ["/path/to/locally/dist/index.js"]` instead.
 
-**3. Verify.** Reconnect the server (`/mcp` in Claude Code) and try a call — point `explore_task` at a repo and check the result. Each result ends with a provenance footer showing the model used and tokens generated locally, so you can confirm the work actually ran on your endpoint.
+**2. Verify.** Reconnect the server (`/mcp` in Claude Code) and try a call — point `explore_task` at a repo and check the result. Each result ends with a provenance footer showing the model used and tokens generated locally, so you can confirm the work actually ran on your endpoint.
 
 That's the whole happy path. Want multiple models, route explore vs. run to different models, or sandbox file access? See [Configuration](#configuration).
 
@@ -196,6 +187,8 @@ These env vars are read as a **per-field fallback** — used both when no config
 
 ## Installation
 
+No install is required — `npx -y locally-mcp` (as in the [Quickstart](#quickstart)) fetches and runs the latest published version. To run from source instead — for development or to pin a specific build — clone and build:
+
 ```bash
 git clone https://github.com/samteezy/locally
 cd locally
@@ -213,21 +206,21 @@ Add to your Claude Code or Claude Desktop MCP config:
 {
   "mcpServers": {
     "locally": {
-      "command": "node",
-      "args": ["/path/to/locally/dist/index.js"]
+      "command": "npx",
+      "args": ["-y", "locally-mcp"]
     }
   }
 }
 ```
 
-Or with a config file:
+Or point it at a config file with `LOCALLY_CONFIG`:
 
 ```json
 {
   "mcpServers": {
     "locally": {
-      "command": "node",
-      "args": ["/path/to/locally/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "locally-mcp"],
       "env": {
         "LOCALLY_CONFIG": "/path/to/locally.config.json"
       }
@@ -235,6 +228,8 @@ Or with a config file:
   }
 }
 ```
+
+Running from source instead? Swap `command`/`args` for `"command": "node", "args": ["/path/to/locally/dist/index.js"]`.
 
 ### Remote MCP (HTTP)
 
@@ -245,10 +240,10 @@ Run the server in HTTP mode:
 # Set "transport": { "mode": "http", "port": 3000 } in locally.config.json
 
 # Or via env var
-LOCALLY_TRANSPORT=http node dist/index.js
+LOCALLY_TRANSPORT=http npx -y locally-mcp
 
 # Or via CLI flag
-node dist/index.js --transport http
+npx -y locally-mcp --transport http
 ```
 
 The server exposes:
