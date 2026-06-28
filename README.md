@@ -204,6 +204,12 @@ Register as a remote MCP in Claude Code:
 claude mcp add --transport http locally http://localhost:3000/mcp
 ```
 
+### Getting Claude Code to use locally
+
+Installing the server only makes locally's tools *available* — by default Claude Code still does low-stakes work itself with its built-in tools. To actually keep that work off the frontier model you need to steer Claude toward locally. The quickest nudge is a `CLAUDE.md` instruction telling Claude to delegate codebase exploration to `explore_task` and routine drafting/edits to `run_task`.
+
+See **[docs/claude-code.md](docs/claude-code.md)** for the full guide: the CLAUDE.md approach, a ready-to-use delegation subagent, and (with caveats) hard enforcement via permissions and hooks.
+
 ## Development
 
 ```bash
