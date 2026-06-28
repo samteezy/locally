@@ -9,12 +9,13 @@ const MAX_OUTPUT_CHARS = 10_000;
 const GIT_ALLOWED = new Set(["status", "diff", "log", "show", "blame", "branch", "tag"]);
 const NPM_ALLOWED = new Set(["test", "run"]);
 
+// Reading and searching go through the dedicated read_file / explore_files tools, which are
+// confined to the allowed roots. The shell allowlist therefore omits file-reading commands
+// (cat/head/tail/stat) and search/exec primitives (find/grep/rg/echo) — find -exec in particular
+// is arbitrary code execution. What remains is a build/test/inspect surface; the commands that can
+// run code (git, npm) only ever run with a cwd validated against the allowed roots.
 const ALLOWED_COMMANDS = new Set([
-  "cat", "head", "tail", "wc", "diff",
-  "ls", "find", "stat",
-  "grep", "rg",
-  "echo",
-  "pwd",
+  "ls", "pwd", "wc", "diff",
   "git",
   "npm",
   "tsc",
@@ -69,9 +70,21 @@ export async function runShell(params: RunShellParams): Promise<string> {
     }
   }
 
+  // git reads the repository's own .git/config, which can configure programs that run on
+  // otherwise read-only subcommands (core.fsmonitor, the pager). cwd is already confined to the
+  // allowed roots, but neutralize those vectors as defense in depth: skip system config and
+  // override the dangerous keys regardless of what a repo's config sets.
+  let runArgs = args;
+  let env = process.env;
+  if (command === "git") {
+    runArgs = ["-c", "core.fsmonitor=", "-c", "core.pager=cat", ...args];
+    env = { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_PAGER: "cat" };
+  }
+
   try {
-    const { stdout, stderr } = await execFileAsync(command, args, {
+    const { stdout, stderr } = await execFileAsync(command, runArgs, {
       cwd,
+      env,
       timeout: TIMEOUT_MS,
       maxBuffer: MAX_OUTPUT_CHARS * 4,
     });

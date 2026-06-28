@@ -1,6 +1,11 @@
 import { buildTree, exploreFiles, IGNORED_DIRS, type ExploreFilesParams } from "./explore-files.js";
 import { runAgentLoop, type AgentTool, type AgentRunResult } from "../llm/agent-loop.js";
 import { resolveAgentConfig, resolveToolAgent, type LocallyConfig } from "../config.js";
+import { assertWithinRoots, effectiveRoots } from "./sandbox.js";
+import type { ReadFileParams } from "./read-file.js";
+import type { WriteFileParams } from "./write-file.js";
+import type { PatchFileParams } from "./patch-file.js";
+import type { RunShellParams } from "./run-shell.js";
 import type { Message } from "../llm/client.js";
 
 export interface AgenticTaskParams {
@@ -34,6 +39,11 @@ export async function runAgenticTask(
   const configIgnore = config.ignorePatterns ?? [];
   const ignoreDirs = configIgnore.length > 0 ? new Set([...IGNORED_DIRS, ...configIgnore]) : IGNORED_DIRS;
 
+  // Confine every file/shell tool to the allowed roots (default: the launch directory). The
+  // per-task `path` is only a tree-map hint, not the boundary — using it would block legitimate
+  // cross-directory work within the same project.
+  const roots = effectiveRoots(config);
+
   const messages: Message[] = [];
 
   // Tool-supplied base prompt first (e.g. the Explore contract), then the caller's
@@ -60,19 +70,60 @@ export async function runAgenticTask(
 
   messages.push({ role: "user", content: userContent });
 
-  const resolvedTools: AgentTool[] = configIgnore.length > 0
-    ? tools.map((t) =>
-        t.definition.function.name === "explore_files"
-          ? {
-              ...t,
-              handler: (args: unknown) => {
-                const p = args as ExploreFilesParams;
-                return exploreFiles({ ...p, ignore_patterns: [...configIgnore, ...(p.ignore_patterns ?? [])] });
-              },
-            }
-          : t
-      )
-    : tools;
+  // Wrap each path-bearing tool so its path/cwd is validated against the roots before it runs.
+  // Thrown LocallyErrors are caught by the agent loop and fed back to the model as a tool result,
+  // so the model self-corrects to a valid path rather than aborting the run.
+  const resolvedTools: AgentTool[] = tools.map((t) => {
+    switch (t.definition.function.name) {
+      case "read_file":
+        return {
+          ...t,
+          handler: (args: unknown) => {
+            assertWithinRoots((args as ReadFileParams).path, roots, { mustExist: true });
+            return t.handler(args);
+          },
+        };
+      case "explore_files":
+        return {
+          ...t,
+          handler: (args: unknown) => {
+            const p = args as ExploreFilesParams;
+            assertWithinRoots(p.path, roots, { mustExist: true });
+            const merged = configIgnore.length > 0
+              ? { ...p, ignore_patterns: [...configIgnore, ...(p.ignore_patterns ?? [])] }
+              : p;
+            return exploreFiles(merged);
+          },
+        };
+      case "write_file":
+        return {
+          ...t,
+          handler: (args: unknown) => {
+            assertWithinRoots((args as WriteFileParams).path, roots);
+            return t.handler(args);
+          },
+        };
+      case "patch_file":
+        return {
+          ...t,
+          handler: (args: unknown) => {
+            assertWithinRoots((args as PatchFileParams).path, roots);
+            return t.handler(args);
+          },
+        };
+      case "run_shell":
+        return {
+          ...t,
+          handler: (args: unknown) => {
+            const p = args as RunShellParams;
+            const canonicalCwd = assertWithinRoots(p.cwd ?? process.cwd(), roots, { mustExist: true });
+            return t.handler({ ...p, cwd: canonicalCwd });
+          },
+        };
+      default:
+        return t;
+    }
+  });
 
   return runAgentLoop(agentConfig, messages, resolvedTools, max_iterations, onProgress);
 }

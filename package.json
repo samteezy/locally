@@ -22,7 +22,8 @@
     "dev": "tsx watch src/index.ts",
     "dev:http": "LOCALLY_TRANSPORT=http tsx watch src/index.ts",
     "build": "tsup",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.25.1"

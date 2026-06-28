@@ -29,6 +29,12 @@ export interface LocallyConfig {
     run?: ToolRoutingConfig;
   };
   ignorePatterns?: string[];
+  /**
+   * Directories the file & shell tools are confined to. The model can only read/write/patch/
+   * search/execute within these roots (symlinks are resolved before the check). Defaults to
+   * `[process.cwd()]` — the directory the server launched in — when unset or empty.
+   */
+  allowedRoots?: string[];
 }
 
 export interface ResolvedAgentConfig {
