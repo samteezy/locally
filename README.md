@@ -274,9 +274,20 @@ npm run dev:http
 # Type check
 npm run typecheck
 
+# Run tests (Vitest)
+npm test
+
+# Tests in watch mode
+npm run test:watch
+
+# Tests with a coverage report
+npm run coverage
+
 # Build
 npm run build
 ```
+
+Tests use [Vitest](https://vitest.dev). Test files are colocated with the code they cover as `*.test.ts` under `src/`. Vitest is a dev-only dependency — it doesn't affect the published bundle, which still ships just `dist/index.js`.
 
 ## Supported endpoints
 
