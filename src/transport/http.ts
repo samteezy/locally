@@ -1,6 +1,15 @@
 import { createServer as createNodeHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer as createMcpServer } from "../server.js";
+import {
+  initKnowledge,
+  isKnowledgeEnabled,
+  searchKnowledge,
+  browseChunks,
+  knowledgeStats,
+} from "../knowledge/index.js";
+import { KNOWLEDGE_UI_HTML } from "../knowledge/ui.js";
+import { formatLocallyError } from "../llm/errors.js";
 import type { LocallyConfig } from "../config.js";
 
 const MAX_BODY_BYTES = 1024 * 1024; // 1MB
@@ -37,6 +46,7 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 export async function startHttp(config: LocallyConfig): Promise<void> {
   const port = config.transport?.port ?? parseInt(process.env.LOCALLY_PORT ?? "3000", 10);
   const host = config.transport?.host ?? process.env.LOCALLY_HOST ?? "127.0.0.1";
+  let knowledgeEnabled = isKnowledgeEnabled(config);
 
   const httpServer = createNodeHttpServer(
     async (req: IncomingMessage, res: ServerResponse) => {
@@ -67,6 +77,11 @@ export async function startHttp(config: LocallyConfig): Promise<void> {
         return;
       }
 
+      if (knowledgeEnabled && req.method === "GET" && req.url?.startsWith("/knowledge")) {
+        await handleKnowledgeRoute(req, res);
+        return;
+      }
+
       res.writeHead(404, { "Content-Type": "text/plain" });
       res.end("Not found");
     }
@@ -80,4 +95,67 @@ export async function startHttp(config: LocallyConfig): Promise<void> {
   process.stderr.write(
     `locally MCP server started (http) at http://${host}:${port}/mcp\n`
   );
+
+  if (knowledgeEnabled) {
+    try {
+      const status = await initKnowledge(config);
+      process.stderr.write(
+        `locally: ${status}\n` +
+          `locally: knowledge UI at http://${host}:${port}/knowledge\n`
+      );
+    } catch (err) {
+      // A misconfigured knowledge base shouldn't take down the MCP server.
+      process.stderr.write(`locally: knowledge base disabled — ${formatLocallyError(err)}\n`);
+      knowledgeEnabled = false;
+    }
+  }
+}
+
+const json = (res: ServerResponse, status: number, payload: unknown): void => {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(payload));
+};
+
+/** Read-only browse/search endpoints + UI for the knowledge base. No auth (per design). */
+async function handleKnowledgeRoute(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const path = url.pathname;
+
+  try {
+    if (path === "/knowledge" || path === "/knowledge/") {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(KNOWLEDGE_UI_HTML);
+      return;
+    }
+
+    if (path === "/knowledge/stats") {
+      json(res, 200, knowledgeStats() ?? { files: 0, chunks: 0, dimensions: null, lastIndexed: null });
+      return;
+    }
+
+    if (path === "/knowledge/search") {
+      const q = (url.searchParams.get("q") ?? "").trim();
+      if (!q) {
+        json(res, 400, { error: "missing query parameter 'q'" });
+        return;
+      }
+      const k = Math.min(Math.max(1, parseInt(url.searchParams.get("k") ?? "10", 10) || 10), 25);
+      const results = await searchKnowledge(q, k);
+      json(res, 200, { results });
+      return;
+    }
+
+    if (path === "/knowledge/chunks") {
+      const limit = Math.min(Math.max(1, parseInt(url.searchParams.get("limit") ?? "100", 10) || 100), 500);
+      const offset = Math.max(0, parseInt(url.searchParams.get("offset") ?? "0", 10) || 0);
+      json(res, 200, { chunks: browseChunks(limit, offset) });
+      return;
+    }
+
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("Not found");
+  } catch (err) {
+    res.writeHead(500, { "Content-Type": "text/plain" });
+    res.end(formatLocallyError(err));
+  }
 }

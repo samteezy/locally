@@ -249,12 +249,72 @@ npx -y locally-mcp --transport http
 The server exposes:
 - `POST /mcp` — MCP Streamable HTTP endpoint
 - `GET /health` — liveness check
+- `GET /knowledge…` — browse/search the knowledge base, when enabled (see [Knowledge base](#knowledge-base-remote-mode))
 
 Register as a remote MCP in Claude Code:
 
 ```bash
 claude mcp add --transport http locally http://localhost:3000/mcp
 ```
+
+## Knowledge base (remote mode)
+
+An optional, opt-in feature (HTTP mode only) that turns locally into a personal semantic-search
+service over your own notes. It watches one or more folders, chunks and embeds changed `.md`/`.txt`
+files via an OpenAI-compatible embeddings endpoint, and stores the vectors in a local SQLite
+database (`node:sqlite` + [`sqlite-vec`](https://github.com/asg017/sqlite-vec)). You can then search
+from a browser, over HTTP, or from an agent via MCP.
+
+Enable it in `locally.config.json` (the server must run in HTTP mode):
+
+```jsonc
+{
+  "transport": { "mode": "http", "port": 3000, "host": "127.0.0.1" },
+  "allowedRoots": ["/home/you/notes"],
+  "knowledge": {
+    "enabled": true,
+    "watch": ["/home/you/notes"],          // must be inside allowedRoots
+    "storePath": "/home/you/.locally/knowledge.db",
+    "fileTypes": ["md", "markdown", "txt"],
+    "embeddings": {
+      "baseUrl": "http://localhost:11434/v1",
+      "model": "nomic-embed-text",
+      "apiKey": "",
+      "dimensions": 768                      // optional — inferred from the first vector if omitted
+    },
+    "chunk": { "maxChars": 1000, "overlap": 150 }
+  }
+}
+```
+
+The embeddings endpoint falls back to `LOCALLY_EMBEDDINGS_BASE_URL` / `LOCALLY_EMBEDDINGS_MODEL` /
+`LOCALLY_EMBEDDINGS_API_KEY`, then to your `default` agent's `baseUrl`/`apiKey`, so if a single
+endpoint serves both chat and embeddings you only need to set `model`.
+
+On startup it scans the watched folders (incrementally — unchanged files are skipped), then watches
+for changes and re-indexes within ~1s of an add/edit/delete. **Folder structure is part of the
+retrieval signal**: each chunk is embedded together with its humanized path and in-document heading
+(e.g. `Source: projects / acme / meeting notes` + `Section: Q3 > Budget`), so a note's location
+influences search — the raw chunk text is stored and shown unchanged.
+
+When enabled, the HTTP server also exposes (alongside `/mcp` and `/health`):
+
+| Endpoint | Description |
+| --- | --- |
+| `GET /knowledge` | Minimal browse/search UI |
+| `GET /knowledge/search?q=…&k=10` | JSON semantic search |
+| `GET /knowledge/chunks?limit=&offset=` | Browse indexed chunks |
+| `GET /knowledge/stats` | File/chunk counts + last-indexed time |
+
+…plus a **`knowledge_search`** MCP tool on `/mcp` so an external agent can retrieve from your notes.
+
+> **No authentication.** These endpoints are unauthenticated by design — keep the default
+> `127.0.0.1` bind for local-only use, or put the server behind your own reverse proxy / VPN before
+> exposing it. A misconfigured `knowledge` block (e.g. a `watch` folder outside `allowedRoots`) logs
+> a clear error and disables the feature without taking down the MCP server.
+
+Currently only Markdown and plain text are indexed; broader document support (PDF, Word, etc.) is
+tracked in [#7](https://github.com/samteezy/locally/issues/7).
 
 ### Getting Claude Code to use locally
 

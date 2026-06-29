@@ -20,6 +20,32 @@ export interface ToolRoutingConfig {
   agent?: string;
 }
 
+export interface EmbeddingsConfig {
+  baseUrl?: string;
+  model?: string;
+  apiKey?: string;
+  /** Vector dimension. Optional — inferred from the first embedding and recorded if omitted. */
+  dimensions?: number;
+  /** Texts per /embeddings request (default 32). */
+  batchSize?: number;
+  timeout?: number; // seconds
+}
+
+export interface KnowledgeConfig {
+  /** Opt-in. When false/unset the feature is fully inert (no watcher, routes, tool, or DB). */
+  enabled?: boolean;
+  /** Folders to index. Confined to `allowedRoots` like every other file path. */
+  watch?: string[];
+  /** SQLite file holding chunks + vectors. Default: ~/.locally/knowledge.db */
+  storePath?: string;
+  /** Extensions to index (no leading dot). Default: ["md", "markdown", "txt"]. */
+  fileTypes?: string[];
+  /** OpenAI-compatible embeddings endpoint. */
+  embeddings?: EmbeddingsConfig;
+  /** Chunking knobs. Defaults: maxChars 1000, overlap 150. */
+  chunk?: { maxChars?: number; overlap?: number };
+}
+
 export interface LocallyConfig {
   transport?: TransportConfig;
   default?: AgentConfig;
@@ -35,6 +61,8 @@ export interface LocallyConfig {
    * `[process.cwd()]` — the directory the server launched in — when unset or empty.
    */
   allowedRoots?: string[];
+  /** Optional folder-watching semantic-search knowledge base (HTTP/remote mode only). */
+  knowledge?: KnowledgeConfig;
 }
 
 export interface ResolvedAgentConfig {
@@ -110,6 +138,49 @@ export function resolveToolAgent(
   paramAgent?: string
 ): string | undefined {
   return paramAgent ?? config.tools?.[toolKey]?.agent;
+}
+
+export interface ResolvedEmbeddingsConfig {
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+  dimensions?: number;
+  batchSize: number;
+  timeout?: number; // seconds
+}
+
+/**
+ * Resolve the embeddings endpoint for the knowledge base. Precedence: knowledge.embeddings >
+ * LOCALLY_EMBEDDINGS_* env > the default agent's baseUrl/apiKey (so a user who already
+ * configured a single endpoint doesn't have to repeat it). `model` has no sane default — the
+ * embeddings model is endpoint-specific — so it stays "" and the client surfaces a config error.
+ */
+export function resolveEmbeddingsConfig(config: LocallyConfig): ResolvedEmbeddingsConfig {
+  const emb = config.knowledge?.embeddings ?? {};
+  const defaults = config.default ?? {};
+
+  const baseUrl =
+    emb.baseUrl ??
+    process.env.LOCALLY_EMBEDDINGS_BASE_URL ??
+    defaults.baseUrl ??
+    process.env.LOCALLY_BASE_URL ??
+    "http://localhost:11434/v1";
+  const model = emb.model ?? process.env.LOCALLY_EMBEDDINGS_MODEL ?? "";
+  const apiKey =
+    emb.apiKey ??
+    process.env.LOCALLY_EMBEDDINGS_API_KEY ??
+    defaults.apiKey ??
+    process.env.LOCALLY_API_KEY ??
+    "";
+
+  return {
+    baseUrl,
+    model,
+    apiKey,
+    dimensions: emb.dimensions,
+    batchSize: emb.batchSize ?? 32,
+    timeout: emb.timeout ?? defaults.timeout,
+  };
 }
 
 export function resolveTransportMode(config: LocallyConfig): "stdio" | "http" {

@@ -22,13 +22,16 @@ npm run dev:http    # HTTP mode, watch
 - `src/tools/read-file.ts` — file reader available to the agentic loop (path + optional line range)
 - `src/llm/agent-loop.ts` — agentic loop: tool-call dispatch, result caching, max-iterations guard
 - `src/llm/client.ts` — fetch-based OpenAI client, no external deps
+- `src/llm/embeddings.ts` — fetch-based `/embeddings` client (mirrors `client.ts`), for the knowledge base
 - `src/transport/stdio.ts` / `http.ts` — stdio and Streamable HTTP transports
+- `src/knowledge/` — optional knowledge base (HTTP/remote mode): `store.ts` (node:sqlite + sqlite-vec vector store), `chunk.ts` (structure-aware md/txt chunker + path-context helper), `indexer.ts` (initial scan + `fs.watch` incremental re-index), `index.ts` (process-level singleton: `initKnowledge`/`getKnowledgeStore`/`searchKnowledge`), `ui.ts` (inlined browse/search page)
+- `src/tools/knowledge-search.ts` — `knowledge_search` MCP tool (registered only when the knowledge base is initialized)
 
 ## Conventions
 
 - ESM throughout (`"type": "module"`), Node ≥ 24
 - All local imports use `.js` extensions (NodeNext module resolution)
-- No runtime deps beyond `@modelcontextprotocol/sdk` — use Node built-ins
+- Runtime deps kept minimal: `@modelcontextprotocol/sdk`, plus `sqlite-vec` (vector search, used only by the optional knowledge base) — otherwise use Node built-ins. The vector store uses the `node:sqlite` builtin; it's loaded via a runtime `require` in `store.ts` because esbuild rewrites a static `node:sqlite` import to an unresolvable bare `sqlite` (see `tsup.config.ts` externals)
 - `createServer()` in `server.ts` is a factory (called per HTTP request for stateless transport)
 
 ## Config
@@ -40,6 +43,8 @@ Optional `timeout` (seconds, default 600, on `default` or per-agent) bounds each
 Optional `allowedRoots` (array of absolute dirs) confines every file/shell tool — `read_file`, `write_file`, `patch_file`, `explore_files`, and `run_shell`'s `cwd` — to those directories. Symlinks are resolved before the check (`src/tools/sandbox.ts`), so a link out of a root is rejected. Defaults to `[process.cwd()]` (the launch directory) when unset, so the model is sandboxed by default. A blocked path returns a `constraint` error and the model retries within bounds. The effective fence is logged to stderr at startup (`index.ts` → `effectiveRoots`), so you can see whether the default `process.cwd()` landed where you expect; a fully-unresolvable `allowedRoots` fails fast at startup. The shell allowlist (`src/tools/run-shell.ts`) is intentionally narrow — no `cat`/`find`/`grep` etc.; reading and searching go through the confined `read_file`/`explore_files` tools instead.
 
 Tool failures are categorized via `LocallyError` (`src/llm/errors.ts`) and rendered as tagged prose by `formatLocallyError` in `server.ts`'s catch: `timeout`/`config`/`constraint` are local (configurable) faults, `upstream` is the model endpoint's fault. Each carries an actionable `Fix:` line.
+
+Optional `knowledge` block enables the knowledge base (HTTP/remote mode only — the watcher is a process-level singleton that can't live in the per-request MCP factory). It watches `knowledge.watch` folders (confined to `allowedRoots`), chunks + embeds `.md`/`.txt` via `knowledge.embeddings` (an OpenAI-compatible `/embeddings` endpoint, resolved by `resolveEmbeddingsConfig` with `LOCALLY_EMBEDDINGS_*` / default-agent fallbacks), and stores vectors in a `node:sqlite` + `sqlite-vec` DB at `knowledge.storePath` (default `~/.locally/knowledge.db`). Exposed as: a `knowledge_search` MCP tool on `/mcp`, JSON routes (`/knowledge/search`, `/knowledge/chunks`, `/knowledge/stats`), and a browse/search UI at `/knowledge`. **No auth** — bind to `127.0.0.1` (default) or front it with a reverse proxy. The indexer factors each file's folder path into the embedded text (`buildEmbedInput`: `Source: <humanized path>` + heading + content) so retrieval is location-aware. A misconfigured knowledge block logs and disables the feature without taking down the MCP server. Disabled/unset → fully inert (no routes, no tool, no DB).
 
 ## Practices
 Try to use locally yourself when working in this repo - but check its work.

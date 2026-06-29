@@ -26,5 +26,20 @@
     "run": { "agent": "coder" }
   },
   "ignorePatterns": ["*.log", "tmp"],
-  "allowedRoots": ["/abs/path/to/project", "/abs/path/to/another"]
+  "allowedRoots": ["/abs/path/to/project", "/abs/path/to/another"],
+  "knowledge": {
+    "enabled": false,
+    "watch": ["/abs/path/to/notes"],
+    "storePath": "/abs/path/to/knowledge.db",
+    "fileTypes": ["md", "markdown", "txt"],
+    "embeddings": {
+      "baseUrl": "http://localhost:11434/v1",
+      "model": "nomic-embed-text",
+      "apiKey": "",
+      "dimensions": 768,
+      "batchSize": 32,
+      "timeout": 600
+    },
+    "chunk": { "maxChars": 1000, "overlap": 150 }
+  }
 }

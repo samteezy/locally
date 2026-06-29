@@ -5,6 +5,8 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { exploreTask } from "./tools/explore-task.js";
 import { runTask } from "./tools/run-task.js";
+import { knowledgeSearch } from "./tools/knowledge-search.js";
+import { getKnowledgeStore } from "./knowledge/index.js";
 import { withUsageFooter, formatUsageReport } from "./usage.js";
 import { formatLocallyError } from "./llm/errors.js";
 import type { LocallyConfig } from "./config.js";
@@ -18,7 +20,24 @@ Before doing low-stakes, repetitive, or mechanical work yourself, delegate it he
 
 Each result ends with a one-line footer showing the model used and how many tokens were generated locally. The output comes from a smaller model — skim it before relying on it, and re-do anything that needs frontier-level judgment yourself.
 
-Call usage_report when you want the cumulative total of work offloaded to locally — e.g. when the user asks how much has been kept off the frontier model.`;
+Call usage_report when you want the cumulative total of work offloaded to locally — e.g. when the user asks how much has been kept off the frontier model.
+
+When the knowledge base is enabled (HTTP/remote mode), knowledge_search runs semantic search over the user's own indexed notes/documents and returns the most relevant chunks with their source path and heading — use it to retrieve from the user's personal knowledge, not the codebase.`;
+
+const KNOWLEDGE_SEARCH_INPUT_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    query: {
+      type: "string",
+      description: "Natural-language query to semantically search the user's indexed notes/documents.",
+    },
+    limit: {
+      type: "number",
+      description: "Max number of chunks to return (default 5, max 25).",
+    },
+  },
+  required: ["query"],
+};
 
 const TASK_INPUT_SCHEMA = {
   type: "object" as const,
@@ -81,6 +100,17 @@ export function createServer(config: LocallyConfig): Server {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [
+      // knowledge_search is offered only when the knowledge base is initialized (HTTP mode).
+      ...(getKnowledgeStore()
+        ? [
+            {
+              name: "knowledge_search",
+              description:
+                "Semantic search over the user's own indexed notes/documents (their personal knowledge base), not the codebase. Embeds the query and returns the most relevant chunks, each tagged with its source file path and in-document heading. Use to retrieve facts, notes, or context the user has written down.",
+              inputSchema: KNOWLEDGE_SEARCH_INPUT_SCHEMA,
+            },
+          ]
+        : []),
       {
         name: "explore_task",
         description:
@@ -121,6 +151,13 @@ export function createServer(config: LocallyConfig): Server {
             args as unknown as Parameters<typeof runTask>[1]
           );
           return { content: [{ type: "text", text: withUsageFooter(result) }] };
+        }
+
+        case "knowledge_search": {
+          const result = await knowledgeSearch(
+            args as unknown as Parameters<typeof knowledgeSearch>[0]
+          );
+          return { content: [{ type: "text", text: result }] };
         }
 
         case "usage_report": {
