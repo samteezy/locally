@@ -5,6 +5,9 @@ node_modules/
 dist/
 *.js.map
 
+# test coverage
+coverage/
+
 # local config (contains keys/endpoints — use locally.config.example.json as template)
 locally.config.json
 ~/.locally/

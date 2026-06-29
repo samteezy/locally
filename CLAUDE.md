@@ -9,6 +9,9 @@ npm run build       # compile to dist/
 npm run typecheck   # type check without emitting
 npm run dev         # stdio mode, watch
 npm run dev:http    # HTTP mode, watch
+npm test            # run the Vitest suite once
+npm run test:watch  # Vitest in watch mode
+npm run coverage    # Vitest with a v8 coverage report (text + coverage/ HTML)
 ```
 
 ## Architecture
@@ -28,8 +31,17 @@ npm run dev:http    # HTTP mode, watch
 
 - ESM throughout (`"type": "module"`), Node ≥ 24
 - All local imports use `.js` extensions (NodeNext module resolution)
-- No runtime deps beyond `@modelcontextprotocol/sdk` — use Node built-ins
+- No runtime deps beyond `@modelcontextprotocol/sdk` — use Node built-ins. (Vitest is a dev-only dep; this rule governs runtime/production deps and the shipped `dist/` bundle, not test tooling.)
 - `createServer()` in `server.ts` is a factory (called per HTTP request for stateless transport)
+
+## Testing
+
+Tests run on [Vitest](https://vitest.dev) (`vitest.config.ts` at the repo root, node environment). Conventions:
+
+- Test files are colocated with the code they cover as `*.test.ts` under `src/` (e.g. `src/llm/client.test.ts`).
+- Use explicit imports — `import { test, expect, vi } from "vitest"` — no globals, matching the project's no-magic style. Test files are type-checked by `npm run typecheck` (they live under `src/`).
+- Pure functions (`config.ts`, `llm/errors.ts`) are tested directly; the LLM client and agent loop are driven by stubbing global `fetch` with `vi.stubGlobal`. Assert on `LocallyError`'s `category`/`retriable`, not on rendered prose.
+- Coverage via `npm run coverage` (v8 provider). The CLI entry, transports, and config files are excluded as non-unit-testable edges; the `coverage/` report dir is gitignored. There's no CI gate yet, so coverage is informational.
 
 ## Config
 
