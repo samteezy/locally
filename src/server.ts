@@ -76,7 +76,7 @@ const EXPLORE_INPUT_SCHEMA = {
 export function createServer(config: LocallyConfig): Server {
 
   const server = new Server(
-    { name: "locally", version: "0.1.0" },
+    { name: "locally", version: "0.2.0" },
     { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS }
   );
 
