@@ -198,8 +198,9 @@ to block the call and feed a message back to Claude:
 `locally` makes its own offloading visible:
 
 - **Per task:** each `explore_task` / `run_task` result ends with a footer like
-  `_locally · qwen3:8b · 3 iters · ~1.2k tokens generated_`. If you see it, the work
-  ran locally.
+  `_locally · qwen3:8b · 3 iters · 7 files read · 48s · ~12k read locally · ~1.2k returned_`.
+  If you see it, the work ran locally. `(hit cap)` beside the iteration count means the run
+  ran out of its iteration budget rather than finishing.
 - **Cumulative:** ask Claude *"how much have we offloaded to locally?"* (or call
   `mcp__locally__usage_report`) for a running total of tasks handled and tokens
   generated locally since the server started.

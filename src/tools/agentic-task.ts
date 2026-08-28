@@ -51,6 +51,12 @@ export async function runAgenticTask(
   // cross-directory work within the same project.
   const roots = effectiveRoots(config);
 
+  // How many distinct files the model actually opened — reported in the result footer, so a
+  // caller can tell a run that read widely from one that answered off the directory map alone
+  // (issue #13). Collected here rather than in the loop, which dispatches tools by name and has
+  // no business knowing which of them take a path.
+  const filesRead = new Set<string>();
+
   const messages: Message[] = [];
 
   // Tool-supplied base prompt first (e.g. the Explore contract), then the caller's
@@ -102,7 +108,9 @@ export async function runAgenticTask(
         return {
           ...t,
           handler: (args: unknown) => {
-            assertWithinRoots((args as ReadFileParams).path, roots, { mustExist: true });
+            // The canonical path, so the same file reached by two spellings counts once.
+            const canonical = assertWithinRoots((args as ReadFileParams).path, roots, { mustExist: true });
+            filesRead.add(canonical);
             return t.handler(args);
           },
         };
@@ -148,5 +156,6 @@ export async function runAgenticTask(
     }
   });
 
-  return runAgentLoop(agentConfig, messages, resolvedTools, max_iterations, onProgress, signal);
+  const result = await runAgentLoop(agentConfig, messages, resolvedTools, max_iterations, onProgress, signal);
+  return { ...result, filesRead: filesRead.size };
 }

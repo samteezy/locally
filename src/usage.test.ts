@@ -1,14 +1,23 @@
 import { test, expect, beforeEach } from "vitest";
 import { withUsageFooter, formatUsageReport, resetUsage, getSessionStats } from "./usage.js";
+import type { AgentRunResult } from "./llm/agent-loop.js";
 
 beforeEach(() => resetUsage());
 
-const run = (promptTokens: number, completionTokens: number) => ({
+const run = (
+  promptTokens: number,
+  completionTokens: number,
+  overrides: Partial<AgentRunResult> = {}
+): AgentRunResult => ({
   text: "answer",
   model: "test-model",
   promptTokens,
   completionTokens,
   iterations: 3,
+  durationMs: 12_000,
+  cappedAtMaxIterations: false,
+  filesRead: 4,
+  ...overrides,
 });
 
 test("footer reports read and returned separately", () => {
@@ -44,4 +53,29 @@ test("counters accumulate across runs", () => {
 
 test("report is explicit when nothing has run", () => {
   expect(formatUsageReport()).toBe("locally has not handled any tasks since this server started.");
+});
+
+test("footer reports files read and elapsed time", () => {
+  const out = withUsageFooter(run(1000, 100, { durationMs: 200_000, filesRead: 12 }));
+  expect(out).toContain("12 files read");
+  expect(out).toContain("3m20s");
+});
+
+test("footer pluralises a single file read", () => {
+  expect(withUsageFooter(run(1000, 100, { filesRead: 1 }))).toContain("1 file read");
+});
+
+test("footer says nothing about the cap on a run that finished on its own", () => {
+  expect(withUsageFooter(run(1000, 100))).not.toContain("hit cap");
+});
+
+test("footer flags a run that ran out of iterations", () => {
+  // A capped run stopped because it ran out of budget, not because it was done — the caller
+  // cannot otherwise tell the two apart (issue #13).
+  const out = withUsageFooter(run(1000, 100, { cappedAtMaxIterations: true }));
+  expect(out).toContain("3 iters (hit cap)");
+});
+
+test("footer renders sub-minute runs in seconds", () => {
+  expect(withUsageFooter(run(1000, 100, { durationMs: 45_400 }))).toContain("45s");
 });

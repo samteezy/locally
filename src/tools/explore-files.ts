@@ -27,7 +27,7 @@ const MAX_CONTEXT_LINES = 5;
 
 let rgAvailable: boolean | null = null;
 
-async function hasRipgrep(): Promise<boolean> {
+export async function hasRipgrep(): Promise<boolean> {
   if (rgAvailable !== null) return rgAvailable;
   try {
     await execFileAsync("which", ["rg"]);
@@ -72,7 +72,7 @@ function toIgnoreGlob(pattern: string): string {
   return `!**/${pattern}/**`;
 }
 
-function rgIgnoreArgs(ignore: Iterable<string>): string[] {
+export function rgIgnoreArgs(ignore: Iterable<string>): string[] {
   const args: string[] = [];
   for (const p of ignore) {
     args.push("--glob", toIgnoreGlob(p));
@@ -80,7 +80,7 @@ function rgIgnoreArgs(ignore: Iterable<string>): string[] {
   return args;
 }
 
-function grepIgnoreArgs(ignore: Iterable<string>): string[] {
+export function grepIgnoreArgs(ignore: Iterable<string>): string[] {
   const args: string[] = [];
   for (const p of ignore) {
     // grep has no path-glob exclusion; bare names map to --exclude-dir, globs to --exclude.
@@ -195,6 +195,19 @@ async function listFilesWithRg(
     if (e.code === 1) return []; // no matches
     return null; // fall back to the Node walk
   }
+}
+
+/**
+ * Every file under a root — ripgrep first (it honours .gitignore), Node walk as the fallback.
+ * Absolute paths. Used by the citation checker to resolve a partially-specified path.
+ */
+export async function listTreeFiles(
+  dirPath: string,
+  ignore: Set<string>,
+  maxFiles: number
+): Promise<string[]> {
+  const viaRg = (await hasRipgrep()) ? await listFilesWithRg(dirPath, undefined, ignore, maxFiles) : null;
+  return viaRg ?? walkFiles(dirPath, Number.MAX_SAFE_INTEGER, undefined, ignore, maxFiles);
 }
 
 async function walkFiles(

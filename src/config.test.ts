@@ -3,8 +3,7 @@ import {
   resolveAgentConfig,
   resolveToolAgent,
   resolveTransportMode,
-  type LocallyConfig,
-} from "./config.js";
+  type LocallyConfig, symbolCheckEnabled } from "./config.js";
 
 const originalArgv = process.argv;
 
@@ -108,4 +107,38 @@ test("resolveTransportMode defaults to stdio", () => {
   process.argv = ["node", "index.js"];
   vi.stubEnv("LOCALLY_TRANSPORT", undefined);
   expect(resolveTransportMode({})).toBe("stdio");
+});
+
+// --- LOCALLY_VERIFY_SYMBOLS ---------------------------------------------------
+// Read from the environment on every call rather than from the config object: loadConfig
+// returns a config file verbatim and never consults env on that path, so a knob living there
+// would be silently ignored by anyone who has a locally.config.json.
+
+function withSymbolEnv(value: string | undefined, fn: () => void): void {
+  const original = process.env.LOCALLY_VERIFY_SYMBOLS;
+  if (value === undefined) delete process.env.LOCALLY_VERIFY_SYMBOLS;
+  else process.env.LOCALLY_VERIFY_SYMBOLS = value;
+  try {
+    fn();
+  } finally {
+    if (original === undefined) delete process.env.LOCALLY_VERIFY_SYMBOLS;
+    else process.env.LOCALLY_VERIFY_SYMBOLS = original;
+  }
+}
+
+test("the symbol check is on when the env var is unset", () => {
+  withSymbolEnv(undefined, () => expect(symbolCheckEnabled()).toBe(true));
+});
+
+test("the symbol check is off for each spelling of no", () => {
+  for (const value of ["0", "false", "off", "no", "FALSE", " Off "]) {
+    withSymbolEnv(value, () => expect(symbolCheckEnabled()).toBe(false));
+  }
+});
+
+test("an unrecognised value leaves the symbol check on", () => {
+  // Failing open matches the rest of the config: a typo should not silently drop a check.
+  for (const value of ["1", "true", "yes", "maybe", ""]) {
+    withSymbolEnv(value, () => expect(symbolCheckEnabled()).toBe(true));
+  }
 });

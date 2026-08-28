@@ -1,4 +1,4 @@
-import { loadConfig, resolveTransportMode } from "./config.js";
+import { loadConfig, resolveTransportMode, symbolCheckEnabled } from "./config.js";
 import { effectiveRoots } from "./tools/sandbox.js";
 import { startStdio } from "./transport/stdio.js";
 import { startHttp } from "./transport/http.js";
@@ -13,6 +13,12 @@ async function main(): Promise<void> {
   const roots = effectiveRoots(config);
   const fence = config.allowedRoots?.length ? "allowedRoots" : "default (launch directory)";
   process.stderr.write(`locally: file/shell tools confined to [${fence}]: ${roots.join(", ")}\n`);
+
+  // Surfaced for the same reason as the fence: a check that is silently off is worse than one
+  // that is loudly off, and this one only speaks up when it finds something.
+  if (!symbolCheckEnabled()) {
+    process.stderr.write("locally: explore_task symbol check disabled (LOCALLY_VERIFY_SYMBOLS)\n");
+  }
 
   if (mode === "http") {
     await startHttp(config);
