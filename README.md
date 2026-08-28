@@ -119,6 +119,7 @@ There are two places config can come from, and they're meant for different thing
 | `timeout`, `maxTokens` | ❌ (file / per-call only) | ✅ |
 | `agents`, `tools` routing | ❌ (nested) | ✅ |
 | `allowedRoots`, `ignorePatterns` | ❌ (array) | ✅ |
+| `allowedHosts`, `allowedOrigins` (HTTP) | ❌ (array) | ✅ |
 
 The clean way to combine them is `LOCALLY_CONFIG`: put that one env var in your client settings to name *which* config file to load, and keep the rich content in the file (see the [example under Usage](#local-mcp-stdio)).
 
@@ -129,7 +130,9 @@ The clean way to combine them is `LOCALLY_CONFIG`: put that one env var in your 
   "transport": {
     "mode": "stdio",
     "port": 3000,
-    "host": "127.0.0.1"
+    "host": "127.0.0.1",
+    "allowedHosts": ["127.0.0.1", "localhost"],
+    "allowedOrigins": ["127.0.0.1", "localhost"]
   },
   "default": {
     "baseUrl": "http://localhost:11434/v1",
@@ -176,6 +179,7 @@ Tool failures come back as `isError` results tagged with a category so the calli
 | `config` | local | Misconfiguration — no model set, or auth (401/403) failed. | Fix model/`apiKey` in config or env, then reconnect. |
 | `constraint` | local | Hit `max_iterations` without a final answer. | Raise `max_iterations`, or narrow the task. |
 | `upstream` | upstream | The model endpoint failed — unreachable, 4xx/5xx, or a malformed response. | Not locally's fault; verify the endpoint/model is up. Retriable for 5xx/429. |
+| `cancelled` | local | The caller stopped the task, or the client disconnected. | Nothing to fix — re-run if the cancellation wasn't intended. |
 
 The error text leads with `[locally error: <category> — <origin>]` and ends with a concrete `Fix:` line.
 
@@ -261,6 +265,15 @@ The server exposes:
 - `POST /mcp` — MCP Streamable HTTP endpoint
 - `GET /health` — liveness check
 
+`/mcp` is fenced against DNS rebinding: the `Host` and `Origin` headers must name the bind host
+or localhost, or the request gets a `403`. Reaching the server by any other name — a reverse
+proxy, a container hostname — means listing it under `transport.allowedHosts` /
+`transport.allowedOrigins`:
+
+```json
+{ "transport": { "mode": "http", "allowedHosts": ["mcp.internal"], "allowedOrigins": ["mcp.internal"] } }
+```
+
 Register as a remote MCP in Claude Code:
 
 ```bash
@@ -299,6 +312,32 @@ npm run build
 ```
 
 Tests use [Vitest](https://vitest.dev). Test files are colocated with the code they cover as `*.test.ts` under `src/`. Vitest is a dev-only dependency — it doesn't affect the published bundle, which still ships just `dist/index.js`.
+
+## MCP protocol support
+
+locally speaks both the **2025-era** revisions (2024-10-07 through 2025-11-25) and
+**2026-07-28**, on stdio and HTTP, from a single build. The era is negotiated per connection —
+2025 clients open with `initialize`, 2026-07-28 clients probe with `server/discover` — so
+existing hosts keep working unchanged and nothing needs configuring either way.
+
+On a 2026-07-28 connection you additionally get:
+
+- **Cacheable listings.** `tools/list` and `server/discover` advertise a one-hour public TTL
+  instead of the conservative no-cache default, so reconnects stop re-fetching a tool list that
+  cannot change.
+- **Real cancellation.** Stopping a `tools/call` aborts the in-flight request to your model
+  endpoint and halts the agentic loop. Previously a `very thorough` sweep ran to completion — up
+  to 20 iterations of 600s each — with nobody left to receive the answer.
+- **Tool annotations.** `explore_task` is advertised read-only and `run_task` destructive, so a
+  host can decide which needs a confirmation prompt.
+
+The deprecated features in that revision — Roots, Sampling, Logging, HTTP+SSE, and the
+experimental tasks side-channel — are not used and will not be adopted. Diagnostics go to stderr.
+
+If you drive `/mcp` by hand rather than through an MCP client, note that a 2026-07-28 request POST
+must carry the `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name` headers, agreeing with the
+body; mismatches are rejected with `400`. Requests without a 2026 `_meta` envelope are served as
+2025-era traffic and need none of that.
 
 ## Supported endpoints
 

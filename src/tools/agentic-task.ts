@@ -17,6 +17,12 @@ export interface AgenticTaskParams {
   max_iterations?: number;
   onProgress?: (message: string) => void;
   /**
+   * Cancellation from the MCP caller (`ctx.mcpReq.signal`). Aborts the in-flight endpoint
+   * request and stops the loop between iterations, so a cancelled or disconnected client no
+   * longer leaves the local model running.
+   */
+  signal?: AbortSignal;
+  /**
    * Tool-supplied default system prompt (e.g. the Explore contract). Composed ahead of the
    * caller's `system_prompt` rather than replaced by it — both are included when present.
    */
@@ -29,7 +35,8 @@ export async function runAgenticTask(
   toolKey: "explore" | "run",
   tools: AgentTool[]
 ): Promise<AgentRunResult> {
-  const { task, path, system_prompt, agent, max_tokens, max_iterations, baseSystemPrompt, onProgress } = params;
+  const { task, path, system_prompt, agent, max_tokens, max_iterations, baseSystemPrompt, onProgress, signal } =
+    params;
 
   const agentConfig = resolveAgentConfig(config, resolveToolAgent(config, toolKey, agent));
   if (max_tokens !== undefined) {
@@ -141,5 +148,5 @@ export async function runAgenticTask(
     }
   });
 
-  return runAgentLoop(agentConfig, messages, resolvedTools, max_iterations, onProgress);
+  return runAgentLoop(agentConfig, messages, resolvedTools, max_iterations, onProgress, signal);
 }

@@ -150,3 +150,32 @@ test("throws a constraint error when the forced final call returns no text", asy
   expect(caught).toBeInstanceOf(LocallyError);
   expect(caught).toMatchObject({ category: "constraint", origin: "local", retriable: true });
 });
+
+test("an already-aborted signal stops the loop before any completion is requested", async () => {
+  scriptFetch([{ content: "should never be reached" }]);
+  const controller = new AbortController();
+  controller.abort();
+
+  const caught = await runAgentLoop(config, [], [], 8, undefined, controller.signal).catch((e) => e);
+
+  expect(caught).toBeInstanceOf(LocallyError);
+  expect(caught).toMatchObject({ category: "cancelled", origin: "local" });
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+test("a signal aborted mid-run stops the loop between iterations", async () => {
+  const controller = new AbortController();
+  // First turn calls a tool; the tool aborts, so the loop must not start a second iteration.
+  scriptFetch([{ content: null, tool_calls: [toolCall("stopper", {})] }, { content: "second turn" }]);
+  const stopper = fakeTool("stopper", async () => {
+    controller.abort();
+    return "stopped";
+  });
+
+  const caught = await runAgentLoop(config, [], [stopper], 8, undefined, controller.signal).catch((e) => e);
+
+  expect(caught).toBeInstanceOf(LocallyError);
+  expect(caught).toMatchObject({ category: "cancelled" });
+  // Only the first iteration's completion was requested.
+  expect(fetch).toHaveBeenCalledTimes(1);
+});

@@ -9,5 +9,5 @@ export default defineConfig({
   banner: {
     js: "#!/usr/bin/env node",
   },
-  external: ["@modelcontextprotocol/sdk"],
+  external: ["@modelcontextprotocol/server", "@modelcontextprotocol/node"],
 });
