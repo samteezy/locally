@@ -19,10 +19,11 @@ npm run coverage    # Vitest with a v8 coverage report (text + coverage/ HTML)
 - `src/index.ts` — entry point, selects transport
 - `src/config.ts` — config loading and agent resolution
 - `src/server.ts` — MCP server factory, tool registration
-- `src/tools/explore-task.ts` — `explore_task` tool: builds dir tree, runs agentic loop for Q&A/analysis
+- `src/tools/explore-task.ts` — `explore_task` tool: search-first system prompt, breadth budget, citation check, shallow-sweep tell
 - `src/tools/run-task.ts` — `run_task` tool: builds dir tree, runs agentic loop for writing/generation
-- `src/tools/explore-files.ts` — directory walker available to the agentic loop (ripgrep → grep fallback)
-- `src/tools/read-file.ts` — file reader available to the agentic loop (path + optional line range)
+- `src/tools/explore-files.ts` — the loop's search tool. With `query` it greps file contents (ripgrep → grep fallback) and returns `path:line:text`; without one it *lists* files (path, line count, size). `include_content: true` opts back into whole-file dumps — the expensive path, kept off the default so the model searches rather than swallowing a directory.
+- `src/tools/read-file.ts` — file reader available to the agentic loop (path + optional line range). Output is line-numbered so the model cites numbers it saw rather than counting them.
+- `src/tools/verify-citations.ts` — re-resolves each `path:line` in an `explore_task` answer against the filesystem; annotates, never rewrites
 - `src/llm/agent-loop.ts` — agentic loop: tool-call dispatch, result caching, max-iterations guard
 - `src/llm/client.ts` — fetch-based OpenAI client, no external deps
 - `src/transport/stdio.ts` / `http.ts` — stdio and Streamable HTTP transports

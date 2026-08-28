@@ -34,6 +34,11 @@ function fmtTokens(n: number): string {
  * Record a completed run and return its text with a one-line provenance footer.
  * The footer tells the frontier model the work came from a smaller model and
  * how much it generated — the cumulative tally lives in the usage_report tool.
+ *
+ * Prompt and completion tokens are reported separately and never summed. Only the
+ * completion tokens substitute for context the caller would otherwise have spent;
+ * the prompt tokens are work done elsewhere, and counting them as tokens avoided
+ * overstates the saving (issue #10).
  */
 export function withUsageFooter(result: AgentRunResult): string {
   promptTokens += result.promptTokens;
@@ -43,7 +48,7 @@ export function withUsageFooter(result: AgentRunResult): string {
   const iterLabel = `${result.iterations} iter${result.iterations === 1 ? "" : "s"}`;
   const tokenPart =
     result.promptTokens > 0 || result.completionTokens > 0
-      ? `~${fmtTokens(result.promptTokens)} processed · ~${fmtTokens(result.completionTokens)} generated`
+      ? `~${fmtTokens(result.promptTokens)} read locally · ~${fmtTokens(result.completionTokens)} returned`
       : "token usage not reported by endpoint";
 
   return `${result.text}\n\n---\n_locally · ${result.model} · ${iterLabel} · ${tokenPart}_`;
@@ -56,5 +61,11 @@ export function formatUsageReport(): string {
     return "locally has not handled any tasks since this server started.";
   }
   const tasks = `${taskCount} task${taskCount === 1 ? "" : "s"}`;
-  return `locally has handled ${tasks} since this server started, processing ~${fmtTokens(promptTokens)} tokens and generating ~${fmtTokens(completionTokens)} tokens locally — keeping ~${fmtTokens(promptTokens + completionTokens)} tokens off the frontier model.`;
+  return [
+    `locally has handled ${tasks} since this server started:`,
+    `~${fmtTokens(promptTokens)} tokens read locally (work done on your own hardware) and`,
+    `~${fmtTokens(completionTokens)} tokens returned to the caller in place of that work.`,
+    `The ~${fmtTokens(completionTokens)} is what actually stayed off the frontier model —`,
+    `the read figure is work performed locally, not context the caller would otherwise have spent.`,
+  ].join(" ");
 }

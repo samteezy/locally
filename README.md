@@ -37,19 +37,27 @@ That's the whole happy path. Want multiple models, route explore vs. run to diff
 
 ### `explore_task`
 
-A read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. It sweeps many files, directories, and naming conventions and returns a conclusion with `file:line` citations rather than file dumps; it reads excerpts to locate code, not to review or audit it. Read-only — the model can call `explore_files` and `read_file` but cannot write. Use for analysis, Q&A, and understanding.
+A read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. It greps with ripgrep and reads targeted excerpts, returning a conclusion with `file:line` citations rather than file dumps. Read-only — the model can call `explore_files` and `read_file` but cannot write. Use for analysis, Q&A, and understanding.
 
-Set `breadth` to tune how widely it searches: `"medium"` (default) checks the most likely locations; `"very thorough"` sweeps multiple locations and naming conventions across the tree. Breadth also raises the default iteration budget (`medium` → 8, `very thorough` → 20); an explicit `max_iterations` overrides it. When `path` is omitted the working directory is mapped, so a path is optional.
+It is strongest at inventory work — list, enumerate, locate, "where is X", naming-convention sweeps — and weaker at open-ended "explain how this is wired" questions, so verify those before relying on them.
+
+Set `breadth` to tune how widely it searches: `"medium"` (default) checks the most likely locations; `"very thorough"` sweeps multiple locations and naming conventions across the tree. Breadth also raises the default iteration budget (`medium` → 8, `very thorough` → 20); an explicit `max_iterations` overrides it. When `path` is omitted the working directory is mapped, so a path is optional. A `"very thorough"` run that concludes in two iterations or fewer is flagged in the result as a shallow sweep.
+
+**Citations are checked before they come back.** Every `path:line` in the answer is re-resolved against the filesystem and confirmed to be a real file with that line in range; the result ends with a `Citations:` line naming any that did not resolve. The check does not confirm the *symbol* named at that line — that needs a parser per language — so it catches invented files and out-of-range numbers, not a right line cited for the wrong reason.
 
 ### `run_task`
 
-Generate code, draft content, or implement changes. The model runs an agentic loop with full read/write access: it can call `explore_files`, `read_file`, `write_file`, and `run_shell` (see below) before producing output. Use for writing, editing, and implementing.
+Generate code, draft content, or implement changes. The model runs an agentic loop with full read/write access: it can call `explore_files`, `read_file`, `write_file`, `patch_file`, and `run_shell` (see below) before producing output. Use for writing, editing, and implementing.
 
 ### `usage_report`
 
-Report how much work has been offloaded to locally since the server started: the number of tasks handled and the approximate tokens processed (input) and generated (output) locally. Takes no arguments. Use it to see how much has been kept off the frontier model.
+Report how much work has been offloaded to locally since the server started: the number of tasks handled, the approximate tokens **read locally** (input) and the tokens **returned to the caller** (output). Takes no arguments.
 
-Note that each `explore_task` and `run_task` result also ends with a one-line provenance footer (model used, iterations, and tokens processed/generated); `usage_report` gives the running cumulative total across all invocations. Counters reset when the server process restarts.
+The two figures are reported separately and never summed. Only the returned tokens substitute for context the caller would otherwise have spent; the tokens read locally are real work, but the caller would not have read all of them itself, so counting them as tokens avoided would overstate the saving.
+
+Note that each `explore_task` and `run_task` result also ends with a one-line provenance footer (model used, iterations, and tokens read/returned); `usage_report` gives the running cumulative total across all invocations. Counters reset when the server process restarts.
+
+Long runs are otherwise silent. When the MCP client sends a `progressToken` with the call, locally relays each loop iteration and tool call as an MCP progress notification, so you can see what it is doing rather than guessing whether it is stuck.
 
 Token counts depend on the endpoint returning a `usage` block (`prompt_tokens` / `completion_tokens`) in its responses. Most OpenAI-compatible servers do, but some omit it — entirely or just `prompt_tokens` — under certain configs or when streaming. When usage isn't reported the footer reads "token usage not reported by endpoint" and the affected counts contribute `0` to the cumulative total; the invocation/task count is always accurate.
 
@@ -58,11 +66,11 @@ Token counts depend on the endpoint returning a `usage` block (`prompt_tokens` /
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `task` | string | required | The prompt or task |
-| `path` | string | cwd | Root directory to pre-map. The model receives a directory tree and can explore deeper via tool calls. Defaults to the working directory when omitted. |
+| `path` | string | cwd | Directory to pre-map as a **starting point**, not a boundary. The model receives a directory tree and is told it may search and read anywhere within `allowedRoots`. Defaults to the working directory when omitted. |
 | `system_prompt` | string | — | Optional system context |
 | `agent` | string | — | Named agent from config. Falls back to the tool-specific default in `config.tools`, then the global `default`. |
 | `max_tokens` | number | config `maxTokens` | Override max completion tokens for this call (overrides the agent's `maxTokens`). |
-| `max_iterations` | number | `10` | Maximum agentic loop iterations before forcing a final answer |
+| `max_iterations` | number | `10` / breadth | Maximum agentic loop iterations before forcing a final answer. `run_task` defaults to 10; `explore_task` defaults to its breadth budget (8 or 20). |
 | `breadth` | string | `medium` | `explore_task` only — `"medium"` or `"very thorough"`. Tunes search width and the default iteration budget. |
 
 ### `run_shell` allowlist
@@ -71,11 +79,14 @@ Token counts depend on the endpoint returning a `usage` block (`prompt_tokens` /
 
 | Command | Notes |
 |---------|-------|
-| `cat` `head` `tail` `wc` `diff` `ls` `find` `stat` `echo` `pwd` | Standard read-only POSIX |
-| `grep` `rg` | Text search |
+| `ls` `pwd` `wc` `diff` | Standard read-only POSIX |
 | `git` | Subcommands: `status` `diff` `log` `show` `blame` `branch` `tag` |
 | `npm` | Subcommands: `test` `run` |
 | `tsc` `eslint` `prettier` | Linting and type checking |
+
+Reading and searching are deliberately **not** here: `cat`/`head`/`tail`/`stat` and `find`/`grep`/`rg`
+would sidestep the `allowedRoots` fence, so they are omitted and the confined `read_file` /
+`explore_files` tools cover that ground instead.
 
 ### Workflow example
 

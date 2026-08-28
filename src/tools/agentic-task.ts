@@ -59,11 +59,27 @@ export async function runAgenticTask(
   // to avoid servers that strip system messages (e.g. llama-swap with Gemma).
   // Fall back to the process cwd so callers get a map even without an explicit path
   // (matches the native Explore agent, which needs no path).
+  //
+  // The map is explicitly labelled a starting point and the real fence is named, because
+  // an unqualified tree reads as the edge of the world: the model stops at it and infers
+  // rather than searching outward (issue #10).
   let userContent = task;
   const treeRoot = path ?? process.cwd();
   try {
     const tree = await buildTree(treeRoot, 5, ignoreDirs);
-    userContent = `Here is the directory structure of ${treeRoot}:\n\n.\n${tree}\n\n---\n\n${task}`;
+    userContent = [
+      `Starting point — the directory structure of ${treeRoot}:`,
+      "",
+      ".",
+      tree,
+      "",
+      `This map is where to start looking, not a boundary. You can search and read anywhere under: ${roots.join(", ")}.`,
+      "If the answer lives outside the map above, search for it there rather than inferring it.",
+      "",
+      "---",
+      "",
+      task,
+    ].join("\n");
   } catch {
     // No usable tree (e.g. unreadable cwd) — fall back to the bare task.
   }
