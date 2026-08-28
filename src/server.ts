@@ -30,7 +30,7 @@ const TASK_INPUT_SCHEMA = {
     path: {
       type: "string",
       description:
-        "Root directory to pre-map before the agent starts. When provided, the model receives a directory tree as context and can explore deeper via tool calls.",
+        "Directory to pre-map as a starting point. The model gets this tree up front, but it is not a boundary — the model can search and read anywhere within the configured allowedRoots. Defaults to the working directory.",
     },
     system_prompt: {
       type: "string",
@@ -47,7 +47,8 @@ const TASK_INPUT_SCHEMA = {
     },
     max_iterations: {
       type: "number",
-      description: "Maximum agentic loop iterations before forcing a final answer (default: 10)",
+      description:
+        "Maximum agentic loop iterations before forcing a final answer. Defaults to 10 for run_task, and to the breadth budget for explore_task (medium: 8, very thorough: 20).",
     },
   },
   required: ["task"],
@@ -84,7 +85,7 @@ export function createServer(config: LocallyConfig): Server {
       {
         name: "explore_task",
         description:
-          "Read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. Sweeps many files, directories, and naming conventions and returns a conclusion with file:line citations, not file dumps. Reads excerpts to locate code; it does not review or audit it. The model runs agentically: it receives a directory map (the given path, else the working directory) then reads files as needed. Set breadth (\"medium\" / \"very thorough\"). Use for analysis, Q&A, and understanding — not for generating code.",
+          "Read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. It greps with ripgrep and reads targeted excerpts, returning a conclusion with file:line citations rather than file dumps; the citations are checked against the filesystem before they come back. Strongest at inventory work — list, enumerate, locate, \"where is X\", naming-convention sweeps. Weaker at open-ended \"explain how this is wired\" architecture questions, so verify those. The path is a starting point, not a boundary. Set breadth (\"medium\" / \"very thorough\"). Use for analysis, Q&A, and understanding — not for generating code.",
         inputSchema: EXPLORE_INPUT_SCHEMA,
       },
       {
@@ -102,24 +103,47 @@ export function createServer(config: LocallyConfig): Server {
     ],
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
     const { name, arguments: args = {} } = request.params;
+
+    // A long sweep is otherwise silent, so the caller cannot tell a slow run from a
+    // stuck one. When the client supplies a progressToken, relay each iteration and
+    // tool call as an MCP progress notification.
+    const progressToken = extra?._meta?.progressToken;
+    let progressCount = 0;
+    const onProgress = progressToken === undefined
+      ? undefined
+      : (message: string) => {
+          // A dropped heartbeat must never take down the task it is reporting on, so
+          // both a synchronous throw and a rejected send are swallowed.
+          try {
+            progressCount++;
+            void extra
+              .sendNotification({
+                method: "notifications/progress",
+                params: { progressToken, progress: progressCount, message },
+              })
+              .catch(() => {});
+          } catch {
+            // ignore
+          }
+        };
 
     try {
       switch (name) {
         case "explore_task": {
-          const result = await exploreTask(
-            config,
-            args as unknown as Parameters<typeof exploreTask>[1]
-          );
+          const result = await exploreTask(config, {
+            ...(args as unknown as Parameters<typeof exploreTask>[1]),
+            onProgress,
+          });
           return { content: [{ type: "text", text: withUsageFooter(result) }] };
         }
 
         case "run_task": {
-          const result = await runTask(
-            config,
-            args as unknown as Parameters<typeof runTask>[1]
-          );
+          const result = await runTask(config, {
+            ...(args as unknown as Parameters<typeof runTask>[1]),
+            onProgress,
+          });
           return { content: [{ type: "text", text: withUsageFooter(result) }] };
         }
 

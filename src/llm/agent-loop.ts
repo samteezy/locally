@@ -30,7 +30,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       function: {
         name: "explore_files",
         description:
-          "Walk a directory and return an LLM-friendly view of its contents. Searches with ripgrep when available, falls back to grep. Use this to understand directory structure or search for content across files.",
+          "Search file contents with ripgrep (or grep) and get back matching lines as path:line:text. This is your primary tool — prefer several narrow searches over one broad sweep. Omit query to list what files exist in a directory (paths, line counts, sizes) without reading them.",
         parameters: EXPLORE_FILES_SCHEMA,
       },
     },
@@ -42,7 +42,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       function: {
         name: "read_file",
         description:
-          "Read the contents of a specific file by absolute path. Optionally read a range of lines with offset and limit.",
+          "Read a file by absolute path. Output is line-numbered, so cite the numbers you see rather than counting. Pass offset and limit to read just the range you need.",
         parameters: READ_FILE_SCHEMA,
       },
     },
@@ -170,6 +170,9 @@ export async function runAgentLoop(
         const cacheKey = `${name}:${JSON.stringify(parsedArgs)}`;
 
         if (toolResultCache.has(cacheKey)) {
+          // Still reported: from the caller's side a cache hit is activity, and a run that
+          // is looping on one repeated call is exactly what a heartbeat should reveal.
+          onProgress?.(`[tool: ${name}] ${argsJson} (cached)`);
           result = `(already retrieved — returning cached result)\n${toolResultCache.get(cacheKey)!}`;
         } else {
           onProgress?.(`[tool: ${name}] ${argsJson}`);
