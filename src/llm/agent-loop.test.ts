@@ -58,6 +58,8 @@ test("returns the model's text answer and accumulates token totals", async () =>
   expect(result.promptTokens).toBe(7);
   expect(result.completionTokens).toBe(3);
   expect(result.iterations).toBe(1);
+  expect(result.cappedAtMaxIterations).toBe(false);
+  expect(result.durationMs).toBeGreaterThanOrEqual(0);
 });
 
 test("dispatches a tool call to its handler and pushes a tool-result message", async () => {
@@ -134,6 +136,8 @@ test("forces a final answer when max iterations is reached", async () => {
   );
   expect(result.text).toBe("forced final");
   expect(result.iterations).toBe(2);
+  // The caller needs to know the run ran out of budget rather than finishing (issue #13).
+  expect(result.cappedAtMaxIterations).toBe(true);
 });
 
 test("throws a constraint error when the forced final call returns no text", async () => {

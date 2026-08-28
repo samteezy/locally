@@ -43,7 +43,19 @@ It is strongest at inventory work — list, enumerate, locate, "where is X", nam
 
 Set `breadth` to tune how widely it searches: `"medium"` (default) checks the most likely locations; `"very thorough"` sweeps multiple locations and naming conventions across the tree. Breadth also raises the default iteration budget (`medium` → 8, `very thorough` → 20); an explicit `max_iterations` overrides it. When `path` is omitted the working directory is mapped, so a path is optional. A `"very thorough"` run that concludes in two iterations or fewer is flagged in the result as a shallow sweep.
 
-**Citations are checked before they come back.** Every `path:line` in the answer is re-resolved against the filesystem and confirmed to be a real file with that line in range; the result ends with a `Citations:` line naming any that did not resolve. The check does not confirm the *symbol* named at that line — that needs a parser per language — so it catches invented files and out-of-range numbers, not a right line cited for the wrong reason.
+**Citations are checked before they come back.** Every `path:line` in the answer is re-resolved against the filesystem and confirmed to be a real file with that line in range; the result ends with a `Citations:` line naming any that did not resolve. The check does not confirm the *symbol* named at that line — that needs a parser per language — so it catches invented files and out-of-range numbers, not a right line cited for the wrong reason. An answer carrying no citations at all is flagged too, since a result with nothing anchored to a file has not done the thing you reached for this tool to do.
+
+A citation written short — `agent-loop.ts:107` rather than `src/llm/agent-loop.ts:107` — is resolved by looking for a file whose path ends with the cited one, rather than being reported as missing. A short path is a formatting slip, not a fabrication, and calling it "file not found" buries the citations that really are wrong.
+
+**Asserted names are checked too.** Small models are accurate about structure they read and confabulate the rest, and the confabulations tend to be *names* — a table, an env var, a constant that sounds right for the codebase but is in none of it. Every distinctive identifier the answer names in backticks is searched for across `allowedRoots`, and the ones that appear nowhere are listed in a `Symbols:` line.
+
+The test is asymmetric, and only one half of it means anything. **No hits anywhere means the model invented the name** — there is no innocent reading of that. **Hits mean nothing is proven**: not that the name is a table, not that it is an env var, not that the claim around it is true. So this catches fabrications, not mistakes. A claim that inverts the meaning of a name that really exists goes through untouched.
+
+Matching is deliberately generous — substring, case-insensitive, and only for names long enough and distinctive enough that their absence is informative. Every one of those choices trades recall for the guarantee that matters more: it will not warn you about a name that is really there. Set `LOCALLY_VERIFY_SYMBOLS=0` to turn it off.
+
+**Read vs inferred.** A claim the model did not actually read the code for is asked to begin with `LIKELY:`. Only unverified claims are marked — a cited claim needs no label, because the citation is the evidence and the server has already checked it. That asymmetry is deliberate: an earlier version asked for a `CONFIRMED` marker too, and a 9B model used it to stamp one blanket "every claim above is CONFIRMED" over a whole answer, which is worse than no marking at all. A tier that only ever admits doubt cannot be applied for free.
+
+The model is also asked to name the search behind any list it produces, so a partial sweep does not read as an exhaustive one. Unlike the two checks above, both of these are requests to the model rather than things the server enforces — a smaller model will not always comply.
 
 ### `run_task`
 
@@ -55,7 +67,13 @@ Report how much work has been offloaded to locally since the server started: the
 
 The two figures are reported separately and never summed. Only the returned tokens substitute for context the caller would otherwise have spent; the tokens read locally are real work, but the caller would not have read all of them itself, so counting them as tokens avoided would overstate the saving.
 
-Note that each `explore_task` and `run_task` result also ends with a one-line provenance footer (model used, iterations, and tokens read/returned); `usage_report` gives the running cumulative total across all invocations. Counters reset when the server process restarts.
+Note that each `explore_task` and `run_task` result also ends with a one-line provenance footer; `usage_report` gives the running cumulative total across all invocations. Counters reset when the server process restarts.
+
+```
+_locally · ornith-1.0-35b · 6 iters · 12 files read · 3m20s · ~279k read locally · ~4.5k returned_
+```
+
+The iteration count reads `6 iters (hit cap)` when the run exhausted `max_iterations` and had to be forced to a final answer. That distinction matters: a run that stopped because it ran out of budget is less complete than one that stopped because it was finished, and the two are otherwise indistinguishable.
 
 Long runs are otherwise silent. When the MCP client sends a `progressToken` with the call, locally relays each loop iteration and tool call as an MCP progress notification, so you can see what it is doing rather than guessing whether it is stuck.
 
@@ -197,6 +215,7 @@ These env vars are read as a **per-field fallback** — used both when no config
 | `LOCALLY_TRANSPORT` | `stdio` |
 | `LOCALLY_PORT` | `3000` |
 | `LOCALLY_HOST` | `127.0.0.1` |
+| `LOCALLY_VERIFY_SYMBOLS` | `1` — set `0` (or `false`/`off`/`no`) to skip the `explore_task` symbol check |
 
 `timeout` and `maxTokens` are the exception: they have no env var and can only be set in the config file (or, for `maxTokens`, per call via the [`max_tokens` parameter](#shared-parameters)).
 

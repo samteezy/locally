@@ -53,6 +53,23 @@ export interface ResolvedAgentConfig {
   timeout?: number; // seconds
 }
 
+/**
+ * Whether explore_task runs the asserted-symbol check on an answer before returning it.
+ *
+ * Read straight from the environment, on purpose. `LocallyConfig` is the parsed config file
+ * verbatim — the per-field env fallback that `baseUrl`/`model`/`apiKey` enjoy happens later, in
+ * resolveAgentConfig, and only for those fields. A `verifySymbols` key on the config object
+ * would therefore have no path by which an env var could reach it, and would be silently
+ * ignored by everyone who has a locally.config.json.
+ *
+ * Set by the person running the server (the MCP client's `env` block), not by the model: this is
+ * deliberately not a per-call parameter, so an answer cannot turn off its own fact-checking.
+ */
+export function symbolCheckEnabled(): boolean {
+  const value = process.env.LOCALLY_VERIFY_SYMBOLS?.trim().toLowerCase();
+  return !(value === "0" || value === "false" || value === "off" || value === "no");
+}
+
 export function loadConfig(): LocallyConfig {
   const configPath = resolveConfigPath();
 

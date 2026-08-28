@@ -21,6 +21,20 @@ export interface AgentRunResult {
   completionTokens: number;
   /** Number of completion calls made (loop iterations, plus a forced final call if capped). */
   iterations: number;
+  /** Wall-clock time spent in the loop. */
+  durationMs: number;
+  /**
+   * True when the loop ran out of iterations and the answer came from the forced final call
+   * rather than the model deciding it was done. A run that stopped because it hit the budget
+   * has a different reliability profile from one that stopped because it finished, and the
+   * iteration count alone does not distinguish them (issue #13).
+   */
+  cappedAtMaxIterations: boolean;
+  /**
+   * Distinct files opened with read_file. Filled in by the caller that owns the tool handlers
+   * (see runAgenticTask); the loop itself dispatches tools by name and does not inspect them.
+   */
+  filesRead: number;
 }
 
 export const AGENT_TOOLS: AgentTool[] = [
@@ -100,6 +114,7 @@ export async function runAgentLoop(
   onProgress?: (message: string) => void,
   signal?: AbortSignal
 ): Promise<AgentRunResult> {
+  const startedAt = Date.now();
   const toolDefs: ToolDefinition[] = tools.map((t) => t.definition);
   const toolMap = new Map<string, AgentTool["handler"]>(
     tools.map((t) => [t.definition.function.name, t.handler])
@@ -167,7 +182,16 @@ export async function runAgentLoop(
       if (typeof turn.content !== "string") {
         throw new Error("Model returned neither tool calls nor text content.");
       }
-      return { text: turn.content, model: config.model, promptTokens, completionTokens, iterations };
+      return {
+        text: turn.content,
+        model: config.model,
+        promptTokens,
+        completionTokens,
+        iterations,
+        durationMs: Date.now() - startedAt,
+        cappedAtMaxIterations: false,
+        filesRead: 0,
+      };
     }
 
     for (const toolCall of turn.tool_calls) {
@@ -235,5 +259,14 @@ export async function runAgentLoop(
       }
     );
   }
-  return { text: finalTurn.content, model: config.model, promptTokens, completionTokens, iterations: iterations + 1 };
+  return {
+    text: finalTurn.content,
+    model: config.model,
+    promptTokens,
+    completionTokens,
+    iterations: iterations + 1,
+    durationMs: Date.now() - startedAt,
+    cappedAtMaxIterations: true,
+    filesRead: 0,
+  };
 }

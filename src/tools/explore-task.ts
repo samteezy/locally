@@ -1,8 +1,9 @@
 import { runAgenticTask, type AgenticTaskParams } from "./agentic-task.js";
 import { verifyCitations, formatCitationReport } from "./verify-citations.js";
+import { verifySymbols, formatSymbolReport } from "./verify-symbols.js";
 import { effectiveRoots } from "./sandbox.js";
 import { AGENT_TOOLS, type AgentRunResult } from "../llm/agent-loop.js";
-import type { LocallyConfig } from "../config.js";
+import { symbolCheckEnabled, type LocallyConfig } from "../config.js";
 
 export type Breadth = "medium" | "very thorough";
 
@@ -22,8 +23,10 @@ How to work:
 
 How to answer:
 - Finish with a concise conclusion that directly answers the task.
-- Cite concrete locations as path:line (e.g. src/llm/agent-loop.ts:152). read_file output and search results are line-numbered — cite the number you actually saw, never one you estimated.
+- Every factual claim carries a path:line, written from the top of the repository — src/llm/agent-loop.ts:152, not agent-loop.ts:152. A claim with no location is not an answer. read_file output and search results are line-numbered — cite the number you actually saw, never one you estimated.
 - Never state what a file contains unless you read it or matched it in a search. Describing an unopened file is the worst thing you can do here.
+- If you did not actually read the code behind a claim, begin that claim with "LIKELY:" and say what you inferred it from. An honest LIKELY beats a guessed path:line. Do not label the claims you did read — their citation is the evidence — and never rate the answer as a whole: a blanket "everything here is confirmed" line gives the reader nothing to act on.
+- When you list or enumerate, name the search that produced the list and say it may be incomplete — e.g. "4 found via rg 'can[A-Z]' entitlements/; this sweep may be incomplete." A bare list reads as exhaustive whether or not it is.
 - If you cannot find something, say so plainly and name where you looked. "Not found in X, Y, Z" is a useful answer; a confident guess is not.
 - Report what the code does and where it is. Do not evaluate quality, judge correctness, or recommend changes — if the task asks for that, answer only the factual "what/where" part and say the rest is out of scope.`;
 
@@ -68,6 +71,17 @@ export async function exploreTask(config: LocallyConfig, params: ExploreTaskPara
     if (report) notes.push(report);
   } catch {
     // Verification is an add-on; never fail a good answer because the check itself broke.
+  }
+
+  // Names the answer asserts exist, checked against the tree. Off switch is an env var set by
+  // whoever runs the server (LOCALLY_VERIFY_SYMBOLS=0), not something the model can reach.
+  if (symbolCheckEnabled()) {
+    try {
+      const report = formatSymbolReport(await verifySymbols(result.text, effectiveRoots(config)));
+      if (report) notes.push(report);
+    } catch {
+      // Same rule as the citation check: an add-on must never sink a good answer.
+    }
   }
 
   if (breadth === "very thorough" && result.iterations <= SHALLOW_SWEEP_ITERATIONS) {

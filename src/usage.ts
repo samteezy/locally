@@ -30,6 +30,12 @@ function fmtTokens(n: number): string {
   return `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`;
 }
 
+function fmtDuration(ms: number): string {
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  return `${Math.floor(totalSeconds / 60)}m${totalSeconds % 60}s`;
+}
+
 /**
  * Record a completed run and return its text with a one-line provenance footer.
  * The footer tells the frontier model the work came from a smaller model and
@@ -45,13 +51,26 @@ export function withUsageFooter(result: AgentRunResult): string {
   completionTokens += result.completionTokens;
   taskCount += 1;
 
-  const iterLabel = `${result.iterations} iter${result.iterations === 1 ? "" : "s"}`;
+  // "hit cap" is the one the caller most needs: a run that stopped because it ran out of
+  // budget is less trustworthy than one that stopped because it was finished, and the
+  // iteration count alone does not say which happened (issue #13).
+  const cap = result.cappedAtMaxIterations ? " (hit cap)" : "";
+  const iterLabel = `${result.iterations} iter${result.iterations === 1 ? "" : "s"}${cap}`;
+  const filesLabel = `${result.filesRead} file${result.filesRead === 1 ? "" : "s"} read`;
   const tokenPart =
     result.promptTokens > 0 || result.completionTokens > 0
       ? `~${fmtTokens(result.promptTokens)} read locally · ~${fmtTokens(result.completionTokens)} returned`
       : "token usage not reported by endpoint";
 
-  return `${result.text}\n\n---\n_locally · ${result.model} · ${iterLabel} · ${tokenPart}_`;
+  const parts = [
+    result.model,
+    iterLabel,
+    filesLabel,
+    fmtDuration(result.durationMs),
+    tokenPart,
+  ];
+
+  return `${result.text}\n\n---\n_locally · ${parts.join(" · ")}_`;
 }
 
 /** One-line cumulative summary for the usage_report tool. */
