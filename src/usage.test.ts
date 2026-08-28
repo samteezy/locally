@@ -17,6 +17,10 @@ const run = (
   durationMs: 12_000,
   cappedAtMaxIterations: false,
   filesRead: 4,
+  filesReadPaths: [],
+  filesMatchedPaths: [],
+  filesListedPaths: [],
+  nudged: false,
   ...overrides,
 });
 

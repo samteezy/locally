@@ -74,7 +74,7 @@ const EXPLORE_INPUT_SCHEMA = {
  * response's `_meta`, so server.test.ts asserts it against package.json rather than leaving it
  * to drift.
  */
-const SERVER_VERSION = "0.3.1";
+const SERVER_VERSION = "0.3.2";
 
 export function createServer(config: LocallyConfig): Server {
   const server = new Server(
@@ -107,7 +107,7 @@ export function createServer(config: LocallyConfig): Server {
           openWorldHint: false,
         },
         description:
-          "Read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. It greps with ripgrep and reads targeted excerpts, returning a conclusion with file:line citations rather than file dumps; the citations are checked against the filesystem before they come back. Strongest at inventory work — list, enumerate, locate, \"where is X\", naming-convention sweeps. Weaker at open-ended \"explain how this is wired\" architecture questions, so verify those. The path is a starting point, not a boundary. Set breadth (\"medium\" / \"very thorough\"). Use for analysis, Q&A, and understanding — not for generating code.",
+          "Read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. It greps with ripgrep and reads targeted excerpts, returning a conclusion with file:line citations rather than file dumps. Before the answer comes back the server checks it: citations are re-resolved against the filesystem, file paths and asserted names are existence-checked, and any file the answer describes without ever having opened is named. Strongest at inventory work — list, enumerate, locate, \"where is X\", naming-convention sweeps. Weaker at open-ended \"explain how this is wired\" architecture questions, so verify those. The path is a starting point, not a boundary. Set breadth (\"medium\" / \"very thorough\"). Use for analysis, Q&A, and understanding — not for generating code.",
         inputSchema: EXPLORE_INPUT_SCHEMA,
       },
       {

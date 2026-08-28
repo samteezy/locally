@@ -1,7 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { isAbsolute, resolve, sep } from "node:path";
-import { assertWithinRoots } from "./sandbox.js";
-import { listTreeFiles, IGNORED_DIRS } from "./explore-files.js";
+import { FileResolver, type ResolvedFile } from "./resolve-path.js";
+import { stripFences, tableRows } from "./answer-text.js";
 
 /**
  * `path:line` citations are the reason to reach for explore_task over a chat window, so
@@ -13,144 +11,153 @@ import { listTreeFiles, IGNORED_DIRS } from "./explore-files.js";
  * the named symbol: that needs a parser per language, and a wrong "unverified" tag on a
  * correct citation is worse than no tag at all. Citations are annotated, never rewritten;
  * silently "correcting" a line number would hide exactly the failure worth seeing.
+ *
+ * Both halves of that bargain failed in issue #16 — one run's citations were not read at all
+ * (they were in table cells) and another's were all called missing (they were bare basenames from
+ * a mapped subdirectory). Extraction below therefore reads four forms, and resolution is handled
+ * by FileResolver, which tries the task's own path before the roots.
  */
 
 /**
- * A path-looking token with a real extension, followed by `:line`.
+ * A path-looking token with a real extension.
  *
  * The lookbehind rejects any candidate preceded by a word character, `:` or `/`, which
  * is what keeps URLs out: in `https://example.com:8080` every possible starting point is
  * preceded by one of those. It also drops version strings like `v1.2:3`, since the
  * extension must begin with a letter.
  */
-const CITATION_RE = /(?<![\w:/])(\/?(?:[\w.@+~-]+\/)*[\w.@+~-]+\.[A-Za-z][\w]*):(\d+)/g;
+const PATH_TOKEN = String.raw`(?<![\w:/])(\/?(?:[\w.@+~-]+\/)*[\w.@+~-]+\.[A-Za-z][\w]*)`;
+
+/** `src/app.ts:12`, and the range form `src/app.ts:12-40`. */
+const CITATION_RE = new RegExp(`${PATH_TOKEN}:(\\d+)(?:\\s*[-–]\\s*(\\d+))?`, "g");
+
+/**
+ * A path and a line number written apart from each other: `src/app.ts … lines 26-450`. Bounded to
+ * one line and a short gap, so a path in one sentence cannot capture a number from the next.
+ */
+const PROSE_RANGE_RE = new RegExp(`${PATH_TOKEN}[^\\n]{0,40}?\\blines?\\s+(\\d+)(?:\\s*[-–]\\s*(\\d+))?`, "g");
+
+/** A cell holding a line number and nothing else — `47`, `26-450`, `lines 26-450`. */
+const LINE_CELL_RE = /^(?:lines?\s+)?(\d+)(?:\s*[-–]\s*(\d+))?$/i;
+
+/** A cell holding a path and nothing else, once markdown decoration is stripped. */
+const PATH_CELL_RE = /^\/?(?:[\w.@+~-]+\/)*[\w.@+~-]+\.[A-Za-z][\w]*$/;
+
+export interface Citation {
+  path: string;
+  line: number;
+  /** Present for a range citation; the last line claimed. */
+  endLine?: number;
+}
 
 export interface CitationCheck {
   citation: string;
   ok: boolean;
   reason?: string;
+  /** Canonical path this citation resolved to, when it resolved to exactly one file. */
+  resolvedPath?: string;
 }
 
-/** Bounds the index for a citation that needs a tree-wide lookup. */
-const MAX_INDEXED_FILES = 20_000;
+function citationLabel(c: Citation): string {
+  return c.endLine ? `${c.path}:${c.line}-${c.endLine}` : `${c.path}:${c.line}`;
+}
 
 /**
- * Files under the roots, listed once per verification run and only if some citation actually
- * needs them. Most answers cite paths that resolve directly and never touch this.
+ * Rows of a markdown table that pair a path cell with a line-number cell.
+ *
+ * Issue #16's run A wrote every one of its citations this way — a two-column `| File | Line |`
+ * table — and the inline-only extractor read none of them, so a heavily-cited answer was reported
+ * as naming no location at all. Requiring the number cell to hold *nothing but* a number is what
+ * stops a "12 tables" column from manufacturing citations out of a summary table.
  */
-class TreeIndex {
-  private files: string[] | null = null;
+function tableCitations(text: string): Citation[] {
+  const found: Citation[] = [];
 
-  constructor(private readonly roots: string[]) {}
+  for (const cells of tableRows(text)) {
+    const paths = cells.filter((c) => PATH_CELL_RE.test(c));
+    if (paths.length !== 1) continue;
 
-  private async load(): Promise<string[]> {
-    if (this.files) return this.files;
-    const all: string[] = [];
-    for (const root of this.roots) {
-      try {
-        all.push(...(await listTreeFiles(root, IGNORED_DIRS, MAX_INDEXED_FILES)));
-      } catch {
-        // An unlistable root simply contributes nothing.
-      }
+    for (const cell of cells) {
+      const m = LINE_CELL_RE.exec(cell);
+      if (!m) continue;
+      found.push({ path: paths[0], line: Number(m[1]), ...(m[2] ? { endLine: Number(m[2]) } : {}) });
+      break;
     }
-    this.files = all;
-    return all;
   }
 
-  /**
-   * Files whose path ends with the cited one at a segment boundary, so `agent-loop.ts` finds
-   * `src/llm/agent-loop.ts` but `loop.ts` does not.
-   */
-  async suffixMatches(citedPath: string): Promise<string[]> {
-    const needle = sep + citedPath.split("/").join(sep);
-    return (await this.load()).filter((f) => f.endsWith(needle));
-  }
+  return found;
 }
 
-async function lineCount(path: string): Promise<number> {
-  const content = await readFile(path, "utf-8");
-  return content.split("\n").length;
+function matchCitations(text: string, re: RegExp): Citation[] {
+  const found: Citation[] = [];
+  for (const match of text.matchAll(re)) {
+    const [, path, start, end] = match;
+    found.push({ path, line: Number(start), ...(end ? { endLine: Number(end) } : {}) });
+  }
+  return found;
 }
 
-async function resolvedLineCount(
-  candidate: string,
-  roots: string[],
-  lineCache: Map<string, number | null>
-): Promise<number | null> {
-  let total = lineCache.get(candidate);
-  if (total === undefined) {
-    try {
-      assertWithinRoots(candidate, roots, { mustExist: true });
-      total = await lineCount(candidate);
-    } catch {
-      total = null;
-    }
-    lineCache.set(candidate, total);
-  }
-  return total;
-}
+/**
+ * Every location the answer names, in the four forms a model actually writes them: inline
+ * `path:line`, inline `path:start-end`, a markdown table row, and prose ("…, lines 26-450").
+ *
+ * Only the inline forms are read inside fenced blocks. Inline `path:line` inside a fence is almost
+ * always a real citation pasted from tool output; a bare path near a number is not, so the looser
+ * two forms stay outside.
+ */
+export function extractCitations(text: string): Citation[] {
+  const prose = stripFences(text);
 
-async function checkOne(
-  rawPath: string,
-  line: number,
-  roots: string[],
-  lineCache: Map<string, number | null>,
-  index: TreeIndex
-): Promise<CitationCheck> {
-  const citation = `${rawPath}:${line}`;
+  const all = [
+    ...matchCitations(text, CITATION_RE),
+    ...tableCitations(prose),
+    ...matchCitations(prose, PROSE_RANGE_RE),
+  ];
 
-  // A relative citation is resolved against each root in turn — the model is told it may
-  // range across all of them, so it has no single base directory to cite relative to.
-  const candidates = isAbsolute(rawPath) ? [rawPath] : roots.map((r) => resolve(r, rawPath));
-
-  for (const candidate of candidates) {
-    const total = await resolvedLineCount(candidate, roots, lineCache);
-    if (total === null) continue;
-
-    return line >= 1 && line <= total
-      ? { citation, ok: true }
-      : { citation, ok: false, reason: `file has ${total} lines` };
-  }
-
-  // Nothing resolved against a root, which usually means the path was written short —
-  // `agent-loop.ts:107` rather than `src/llm/agent-loop.ts:107`. A short path is a formatting
-  // slip, not a fabrication, and calling it "file not found" buries the citations that really
-  // are wrong: one eval run flagged 49 of 68 correct citations this way. So fall back to a
-  // tree-wide lookup for a file whose path ends with the cited one.
-  if (!isAbsolute(rawPath)) {
-    const matches = await index.suffixMatches(rawPath);
-    // With several files sharing a name there is no way to tell which was meant, so accept the
-    // citation if the line lands in any of them — silence beats a warning we cannot stand behind.
-    let sawFile = false;
-    for (const match of matches) {
-      const total = await resolvedLineCount(match, roots, lineCache);
-      if (total === null) continue;
-      sawFile = true;
-      if (line >= 1 && line <= total) return { citation, ok: true };
-    }
-    if (sawFile) return { citation, ok: false, reason: "line out of range" };
-  }
-
-  return { citation, ok: false, reason: "file not found" };
-}
-
-export async function verifyCitations(text: string, roots: string[]): Promise<CitationCheck[]> {
   const seen = new Set<string>();
-  const found: Array<{ path: string; line: number }> = [];
-
-  for (const match of text.matchAll(CITATION_RE)) {
-    const [, path, lineStr] = match;
-    const key = `${path}:${lineStr}`;
+  const unique: Citation[] = [];
+  for (const c of all) {
+    const key = citationLabel(c);
     if (seen.has(key)) continue;
     seen.add(key);
-    found.push({ path, line: Number(lineStr) });
+    unique.push(c);
   }
+  return unique;
+}
 
-  const lineCache = new Map<string, number | null>();
-  const index = new TreeIndex(roots);
+function inRange(c: Citation, file: ResolvedFile): boolean {
+  const last = c.endLine ?? c.line;
+  return c.line >= 1 && c.line <= last && last <= file.lines;
+}
+
+async function checkOne(c: Citation, resolver: FileResolver): Promise<CitationCheck> {
+  const citation = citationLabel(c);
+  const files = await resolver.candidates(c.path);
+
+  if (files.length === 0) return { citation, ok: false, reason: "file not found" };
+
+  // With several files sharing a name there is no way to tell which was meant, so accept the
+  // citation if the line lands in any of them — silence beats a warning we cannot stand behind.
+  const hit = files.find((f) => inRange(c, f));
+  if (hit) return { citation, ok: true, resolvedPath: hit.path };
+
+  const reason = files.length === 1 ? `file has ${files[0].lines} lines` : "line out of range";
+  return { citation, ok: false, reason, ...(files.length === 1 ? { resolvedPath: files[0].path } : {}) };
+}
+
+/**
+ * @param taskPath the directory the caller asked to be mapped, tried before the roots when a
+ * relative citation is resolved.
+ */
+export async function verifyCitations(
+  text: string,
+  roots: string[],
+  taskPath?: string
+): Promise<CitationCheck[]> {
+  const resolver = new FileResolver(roots, taskPath);
   const checks: CitationCheck[] = [];
-  for (const { path, line } of found) {
-    checks.push(await checkOne(path, line, roots, lineCache, index));
+  for (const citation of extractCitations(text)) {
+    checks.push(await checkOne(citation, resolver));
   }
   return checks;
 }
@@ -158,13 +165,15 @@ export async function verifyCitations(text: string, roots: string[]): Promise<Ci
 /**
  * One-line summary for the caller.
  *
- * An answer that cites nothing at all gets the loudest note, not silence. Citations are the
- * reason to reach for explore_task over a chat window, so an uncited answer has failed the
- * contract — and until this it was indistinguishable from a well-cited one (issue #13).
+ * "I could not parse any citations" and "I parsed citations and they are wrong" are different
+ * messages and used to read the same (issue #16). The empty case now reports on the *checker* —
+ * it found nothing it could read — rather than asserting the answer names no location, which was
+ * false for an answer whose citations were all in table cells. Failures are grouped by kind for
+ * the same reason: an invented file and a number two lines past the end are not the same problem.
  */
 export function formatCitationReport(checks: CitationCheck[]): string {
   if (checks.length === 0) {
-    return "_Citations: **none** — this answer names no path:line, so nothing in it is anchored to a file. Treat it as unverified._";
+    return "_Citations: **none parsed** — no path:line, path:start-end, prose line reference, or File/Line table row was found, so nothing in this answer was checked against the filesystem._";
   }
 
   const bad = checks.filter((c) => !c.ok);
@@ -174,6 +183,19 @@ export function formatCitationReport(checks: CitationCheck[]): string {
     return `_Citations: ${label}, all resolve to a real file and line._`;
   }
 
-  const details = bad.map((c) => `${c.citation} (${c.reason})`).join("; ");
-  return `_Citations: ${label}, **${bad.length} did not resolve** — ${details}. Treat the surrounding claims as unverified._`;
+  const missing = bad.filter((c) => c.reason === "file not found");
+  const outOfRange = bad.filter((c) => c.reason !== "file not found");
+  const groups: string[] = [];
+  if (missing.length > 0) {
+    const phrase =
+      missing.length === 1 ? "1 names a file that does not exist" : `${missing.length} name files that do not exist`;
+    groups.push(`**${phrase}** — ${missing.map((c) => c.citation).join("; ")}`);
+  }
+  if (outOfRange.length > 0) {
+    const phrase =
+      outOfRange.length === 1 ? "1 points past the end of its file" : `${outOfRange.length} point past the end of their file`;
+    groups.push(`**${phrase}** — ${outOfRange.map((c) => `${c.citation} (${c.reason})`).join("; ")}`);
+  }
+
+  return `_Citations: ${label}, ${groups.join(", and ")}. Treat the surrounding claims as unverified._`;
 }

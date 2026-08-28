@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { join, relative, extname, isAbsolute } from "node:path";
+import { join, relative, extname, isAbsolute, basename } from "node:path";
 
 const execFileAsync = promisify(execFile);
 
@@ -184,9 +184,11 @@ async function listFilesWithRg(
   ignore: Set<string>,
   maxFiles: number
 ): Promise<string[] | null> {
-  const args = ["--files", ...rgIgnoreArgs(ignore)];
+  // Ignores go last: ripgrep resolves overlapping globs by last-match-wins, so a positive
+  // `--glob alpha.ts` placed after `--glob !**/node_modules/**` would pull vendored files back in.
+  const args = ["--files"];
   if (filePattern) args.push("--glob", filePattern);
-  args.push(dirPath);
+  args.push(...rgIgnoreArgs(ignore), dirPath);
   try {
     const { stdout } = await execFileAsync("rg", args, { maxBuffer: 10 * 1024 * 1024 });
     return stdout.split("\n").filter(Boolean).slice(0, maxFiles);
@@ -197,17 +199,29 @@ async function listFilesWithRg(
   }
 }
 
+/** Enough same-named files to decide a citation; past this the extra matches add nothing. */
+const MAX_NAME_MATCHES = 50;
+/** The Node fallback matches loosely, so it needs headroom before the exact names are filtered out. */
+const MAX_NAME_CANDIDATES = 500;
+
 /**
- * Every file under a root — ripgrep first (it honours .gitignore), Node walk as the fallback.
- * Absolute paths. Used by the citation checker to resolve a partially-specified path.
+ * Files anywhere under a root whose *name* is `name` — ripgrep first (it honours .gitignore),
+ * Node walk as the fallback. Absolute paths.
+ *
+ * This is how the citation checker resolves a partially-specified path. It replaced a whole-tree
+ * index that listed every file under the roots and kept the first 20,000: in a monorepo that slice
+ * is arbitrary and unordered, so an entire subtree could fall outside it and every citation into it
+ * came back "file not found" (issue #16). One targeted search per unresolved path has no such cap.
  */
-export async function listTreeFiles(
-  dirPath: string,
-  ignore: Set<string>,
-  maxFiles: number
-): Promise<string[]> {
-  const viaRg = (await hasRipgrep()) ? await listFilesWithRg(dirPath, undefined, ignore, maxFiles) : null;
-  return viaRg ?? walkFiles(dirPath, Number.MAX_SAFE_INTEGER, undefined, ignore, maxFiles);
+export async function findFilesNamed(dirPath: string, name: string): Promise<string[]> {
+  const viaRg = (await hasRipgrep())
+    ? await listFilesWithRg(dirPath, name, IGNORED_DIRS, MAX_NAME_MATCHES)
+    : null;
+  // The Node fallback matches on `includes`, a superset of "named exactly this"; callers filter by
+  // path suffix anyway, so over-returning here is harmless and under-returning would not be.
+  const found =
+    viaRg ?? (await walkFiles(dirPath, Number.MAX_SAFE_INTEGER, name, IGNORED_DIRS, MAX_NAME_CANDIDATES));
+  return found.filter((f) => basename(f) === name).slice(0, MAX_NAME_MATCHES);
 }
 
 async function walkFiles(

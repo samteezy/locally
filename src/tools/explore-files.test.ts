@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { exploreFiles, resetRipgrepCache } from "./explore-files.js";
+import { exploreFiles, findFilesNamed, resetRipgrepCache } from "./explore-files.js";
 
 const base = mkdtempSync(join(tmpdir(), "locally-explore-"));
 
@@ -88,4 +88,47 @@ test("falls back to grep when ripgrep is not on PATH", async () => {
     process.env.PATH = realPath;
     resetRipgrepCache();
   }
+});
+
+// --- findFilesNamed -------------------------------------------------------------
+// How the verifiers resolve a path the model wrote short. It replaced a whole-tree index capped at
+// 20,000 paths, which in a monorepo could drop an entire subtree and report every citation into it
+// as a missing file (issue #16).
+
+test("finds a file anywhere under the root by name", async () => {
+  const found = await findFilesNamed(base, "alpha.ts");
+  expect(found).toEqual([join(base, "src", "alpha.ts")]);
+});
+
+test("matches the whole name, not a fragment of it", async () => {
+  expect(await findFilesNamed(base, "lpha.ts")).toEqual([]);
+});
+
+test("skips ignored directories", async () => {
+  expect(await findFilesNamed(base, "ignored.ts")).toEqual([]);
+});
+
+test("finds nothing for a name that is not there", async () => {
+  expect(await findFilesNamed(base, "nowhere.ts")).toEqual([]);
+});
+
+test("falls back to the Node walk without ripgrep", async () => {
+  const originalPath = process.env.PATH;
+  const emptyDir = mkdtempSync(join(tmpdir(), "locally-nopath-"));
+  process.env.PATH = emptyDir;
+  resetRipgrepCache();
+  try {
+    expect(await findFilesNamed(base, "alpha.ts")).toEqual([join(base, "src", "alpha.ts")]);
+  } finally {
+    process.env.PATH = originalPath;
+    resetRipgrepCache();
+  }
+});
+
+test("a file_pattern does not pull ignored directories back in", async () => {
+  // Ripgrep resolves overlapping globs last-match-wins, so the ignore globs have to be emitted
+  // after the pattern; with the order reversed, `*.ts` re-admitted node_modules.
+  const out = await exploreFiles({ path: base, file_pattern: "*.ts" });
+  expect(out).toContain("alpha.ts");
+  expect(out).not.toContain("ignored.ts");
 });

@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { hasRipgrep, rgIgnoreArgs, grepIgnoreArgs, IGNORED_DIRS } from "./explore-files.js";
+import { codeSpans, stripFences } from "./answer-text.js";
 
 /**
  * A small model is accurate about structure it actually read and confabulates the rest, and the
@@ -27,9 +28,6 @@ import { hasRipgrep, rgIgnoreArgs, grepIgnoreArgs, IGNORED_DIRS } from "./explor
 
 const execFileAsync = promisify(execFile);
 
-/** Fenced blocks hold examples the model wrote itself; searching them manufactures misses. */
-const FENCED_BLOCK_RE = /```[\s\S]*?```/g;
-const INLINE_CODE_RE = /`([^`\n]+)`/g;
 const IDENTIFIER_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const INTERNAL_CASE_CHANGE_RE = /[a-z][A-Z]/;
 
@@ -58,12 +56,11 @@ function isCandidate(token: string): boolean {
 
 /** Distinctive identifiers named in inline code spans, in order of appearance, deduped. */
 export function extractSymbols(text: string): string[] {
-  const prose = text.replace(FENCED_BLOCK_RE, " ");
   const seen = new Set<string>();
   const symbols: string[] = [];
 
-  for (const match of prose.matchAll(INLINE_CODE_RE)) {
-    const token = match[1].trim();
+  // Fenced blocks hold examples the model wrote itself; searching them manufactures misses.
+  for (const token of codeSpans(stripFences(text))) {
     if (!isCandidate(token) || seen.has(token)) continue;
     seen.add(token);
     symbols.push(token);
