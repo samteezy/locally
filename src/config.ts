@@ -14,6 +14,14 @@ export interface TransportConfig {
   mode?: "stdio" | "http";
   port?: number;
   host?: string;
+  /**
+   * Hostnames accepted in the `Host` and `Origin` headers on `/mcp` (DNS-rebinding defence).
+   * Defaults to the bind host plus localhost. A deployment reached by any other name — a
+   * reverse proxy, a container hostname — must list it here or requests are rejected.
+   */
+  allowedHosts?: string[];
+  /** Origin hostnames accepted on `/mcp`. Defaults to `allowedHosts`. */
+  allowedOrigins?: string[];
 }
 
 export interface ToolRoutingConfig {

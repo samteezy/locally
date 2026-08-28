@@ -123,6 +123,19 @@ test("a malformed response (no choices[0].message) surfaces an upstream error", 
   });
 });
 
+test("an AbortError caused by the caller's signal surfaces as cancelled, not a timeout", async () => {
+  stubFetch(() => {
+    const err = new Error("aborted");
+    err.name = "AbortError";
+    return Promise.reject(err);
+  });
+  const controller = new AbortController();
+  controller.abort();
+  const caught = await runCompletionWithTools(baseConfig, [], undefined, controller.signal).catch((e) => e);
+  expect(caught).toBeInstanceOf(LocallyError);
+  expect(caught).toMatchObject({ category: "cancelled", origin: "local", retriable: true });
+});
+
 test("an AbortError from fetch surfaces a retriable timeout error", async () => {
   stubFetch(() => {
     const err = new Error("aborted");

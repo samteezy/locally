@@ -62,7 +62,8 @@ interface CompletionResponse {
 export async function runCompletionWithTools(
   config: LlmConfig,
   messages: Message[],
-  tools?: ToolDefinition[]
+  tools?: ToolDefinition[],
+  signal?: AbortSignal
 ): Promise<AssistantTurn> {
   if (!config.model) {
     throw new LocallyError("No model configured.", {
@@ -101,16 +102,31 @@ export async function runCompletionWithTools(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutSecs * 1000);
 
+  // The caller's signal (an MCP client cancelling the tools/call, or the transport dropping)
+  // aborts the same request the timeout does, so the two are merged rather than one replacing
+  // the other. Which one fired is what tells the two failures apart in the catch below.
+  const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
+
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
-      signal: controller.signal,
+      signal: requestSignal,
     });
   } catch (err) {
     if (err instanceof Error && err.name === "AbortError") {
+      // Only the caller's signal firing without the timeout's means a cancellation; anything
+      // else, including an abort from neither, stays the timeout the caller can act on.
+      if (signal?.aborted && !controller.signal.aborted) {
+        throw new LocallyError("Task cancelled by the caller.", {
+          category: "cancelled",
+          origin: "local",
+          retriable: true,
+          fix: "nothing to fix — re-run the task if the cancellation was not intended.",
+        });
+      }
       throw new LocallyError(`LLM request timed out after ${timeoutSecs}s.`, {
         category: "timeout",
         origin: "local",

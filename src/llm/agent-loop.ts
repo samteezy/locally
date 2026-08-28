@@ -97,7 +97,8 @@ export async function runAgentLoop(
   messages: Message[],
   tools: AgentTool[],
   maxIterations: number = MAX_ITERATIONS_DEFAULT,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  signal?: AbortSignal
 ): Promise<AgentRunResult> {
   const toolDefs: ToolDefinition[] = tools.map((t) => t.definition);
   const toolMap = new Map<string, AgentTool["handler"]>(
@@ -127,13 +128,27 @@ export async function runAgentLoop(
     return err;
   };
 
+  // An in-flight completion is aborted by the merged signal inside the client, but tool calls
+  // and cache hits run between completions — so the loop also checks at the top of each
+  // iteration rather than only noticing on the next fetch.
+  const throwIfCancelled = (): void => {
+    if (!signal?.aborted) return;
+    throw new LocallyError("Task cancelled by the caller.", {
+      category: "cancelled",
+      origin: "local",
+      retriable: true,
+      fix: "nothing to fix — re-run the task if the cancellation was not intended.",
+    });
+  };
+
   while (iterations < maxIterations) {
+    throwIfCancelled();
     iterations++;
     onProgress?.(`[iteration ${iterations}/${maxIterations}]`);
 
     let turn;
     try {
-      turn = await runCompletionWithTools(config, messages, toolDefs);
+      turn = await runCompletionWithTools(config, messages, toolDefs, signal);
     } catch (err) {
       throw augmentProgress(err);
     }
@@ -200,9 +215,10 @@ export async function runAgentLoop(
   }
 
   // Max iterations reached — call without tools to force a final text answer
+  throwIfCancelled();
   let finalTurn;
   try {
-    finalTurn = await runCompletionWithTools(config, messages);
+    finalTurn = await runCompletionWithTools(config, messages, undefined, signal);
   } catch (err) {
     throw augmentProgress(err);
   }

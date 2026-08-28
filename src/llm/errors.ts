@@ -5,12 +5,14 @@
  * - `timeout` / `constraint` — a configurable limit on locally's side; the caller can raise it and retry.
  * - `config` — a misconfiguration on locally's side; needs a config/env fix, then a reconnect.
  * - `upstream` — the model endpoint itself failed; not locally's fault.
+ * - `cancelled` — the caller stopped the task (an MCP `tools/call` cancellation, or the client
+ *   disconnecting). Nothing failed; there is nothing to fix.
  *
  * `origin` records whose fault it is ("local" = locally's config/limits, "upstream" = the endpoint),
  * and `fix` carries the one concrete, actionable next step. `formatLocallyError` renders all of this
  * as tagged prose so it reads cleanly in an MCP `isError` tool result.
  */
-export type LocallyErrorCategory = "timeout" | "config" | "upstream" | "constraint";
+export type LocallyErrorCategory = "timeout" | "config" | "upstream" | "constraint" | "cancelled";
 
 export interface LocallyErrorOptions {
   category: LocallyErrorCategory;
