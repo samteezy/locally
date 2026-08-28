@@ -35,6 +35,21 @@ export interface AgentRunResult {
    * (see runAgenticTask); the loop itself dispatches tools by name and does not inspect them.
    */
   filesRead: number;
+  /**
+   * Canonical paths of those files. The count alone cannot answer the question issue #16 asks —
+   * which of the files this answer describes did the run never actually look at — so the
+   * identities are carried, not just the tally.
+   */
+  filesReadPaths: string[];
+  /** Canonical paths the model saw matching lines from, via an explore_files search. */
+  filesMatchedPaths: string[];
+  /** Canonical paths a directory listing named — the file's existence was seen, not its contents. */
+  filesListedPaths: string[];
+  /**
+   * True when the run was asked to keep sweeping before its answer was accepted. Set by
+   * runAgenticTask, which owns the sweep floor; the loop only knows it was handed a callback.
+   */
+  nudged: boolean;
 }
 
 export const AGENT_TOOLS: AgentTool[] = [
@@ -106,13 +121,25 @@ export const RUN_AGENT_TOOLS: AgentTool[] = [
 
 const MAX_ITERATIONS_DEFAULT = 10;
 
+/**
+ * Consulted when the model offers a final answer. Return text to push back as a user turn and keep
+ * the loop running, or null to accept the answer.
+ *
+ * This is the only thing that lets a caller's "how widely to search" setting shape the run rather
+ * than just flavour the prompt: a "very thorough" sweep that concluded after five iterations of a
+ * twenty-iteration budget, having read fewer files than a "medium" one, is what issue #16 measured.
+ * The `while` guard still bounds everything, so a policy that always wants more cannot run away.
+ */
+export type DraftAnswerHook = (draft: { text: string; iterations: number }) => string | null;
+
 export async function runAgentLoop(
   config: ResolvedAgentConfig,
   messages: Message[],
   tools: AgentTool[],
   maxIterations: number = MAX_ITERATIONS_DEFAULT,
   onProgress?: (message: string) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onDraftAnswer?: DraftAnswerHook
 ): Promise<AgentRunResult> {
   const startedAt = Date.now();
   const toolDefs: ToolDefinition[] = tools.map((t) => t.definition);
@@ -182,6 +209,16 @@ export async function runAgentLoop(
       if (typeof turn.content !== "string") {
         throw new Error("Model returned neither tool calls nor text content.");
       }
+
+      // Only worth asking with iterations left to spend: pushed at the cap, the answer would come
+      // from the forced tool-less final call, where the model cannot act on what it was asked.
+      const nudge = iterations < maxIterations ? onDraftAnswer?.({ text: turn.content, iterations }) : null;
+      if (nudge) {
+        onProgress?.("[keep sweeping]");
+        messages.push({ role: "user", content: nudge });
+        continue;
+      }
+
       return {
         text: turn.content,
         model: config.model,
@@ -191,6 +228,10 @@ export async function runAgentLoop(
         durationMs: Date.now() - startedAt,
         cappedAtMaxIterations: false,
         filesRead: 0,
+        filesReadPaths: [],
+        filesMatchedPaths: [],
+        filesListedPaths: [],
+        nudged: false,
       };
     }
 
@@ -268,5 +309,9 @@ export async function runAgentLoop(
     durationMs: Date.now() - startedAt,
     cappedAtMaxIterations: true,
     filesRead: 0,
+    filesReadPaths: [],
+    filesMatchedPaths: [],
+    filesListedPaths: [],
+    nudged: false,
   };
 }

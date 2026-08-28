@@ -183,3 +183,39 @@ test("a signal aborted mid-run stops the loop between iterations", async () => {
   // Only the first iteration's completion was requested.
   expect(fetch).toHaveBeenCalledTimes(1);
 });
+
+// --- the draft-answer hook ------------------------------------------------------
+// The only thing that lets a caller's breadth setting shape the run rather than flavour the prompt
+// (issue #16): a "very thorough" sweep that concluded after five of twenty iterations.
+
+test("a returned nudge pushes a user turn and keeps the loop running", async () => {
+  scriptFetch([{ content: "Done." }, { content: "Done properly." }]);
+  const messages: Message[] = [{ role: "user", content: "q" }];
+  let asked = 0;
+
+  const result = await runAgentLoop(config, messages, [], 10, undefined, undefined, () =>
+    asked++ === 0 ? "keep going" : null
+  );
+
+  expect(result.text).toBe("Done properly.");
+  expect(result.iterations).toBe(2);
+  expect(messages.some((m) => m.role === "user" && m.content === "keep going")).toBe(true);
+});
+
+test("a null from the hook accepts the answer as before", async () => {
+  scriptFetch([{ content: "Done." }]);
+  const result = await runAgentLoop(config, [{ role: "user", content: "q" }], [], 10, undefined, undefined, () => null);
+  expect(result.text).toBe("Done.");
+  expect(result.iterations).toBe(1);
+});
+
+test("the hook cannot push the loop past its iteration budget", async () => {
+  // At the cap the answer would come from the forced tool-less call, where the model cannot act on
+  // what it was asked — so the hook is not consulted at all.
+  scriptFetch([{ content: "Done." }]);
+  const hook = vi.fn(() => "keep going");
+  const result = await runAgentLoop(config, [{ role: "user", content: "q" }], [], 1, undefined, undefined, hook);
+  expect(hook).not.toHaveBeenCalled();
+  expect(result.text).toBe("Done.");
+  expect(result.cappedAtMaxIterations).toBe(false);
+});
