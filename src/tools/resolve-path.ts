@@ -31,9 +31,18 @@ export interface ResolvedFile {
   lines: number;
 }
 
+/**
+ * Above this a file is counted but its text is not retained. The placement check has no business
+ * holding a multi-megabyte file in memory, and a name that occurs only inside one is not a name an
+ * answer is describing.
+ */
+const MAX_CACHED_FILE_BYTES = 2 * 1024 * 1024;
+
 export class FileResolver {
   /** Canonical path → line count, or null for "not a readable file inside the roots". */
   private readonly lineCache = new Map<string, number | null>();
+  /** Canonical path → its lines, kept from the read the line count already required. */
+  private readonly textCache = new Map<string, string[]>();
   /** Candidate path → its canonical spelling, filled in alongside lineCache. */
   private readonly canonical = new Map<string, string>();
   /** Raw cited path → what it resolved to, so a repeated citation costs nothing. */
@@ -99,6 +108,17 @@ export class FileResolver {
   }
 
   /**
+   * The cited file's lines, or null when the path names no file, names several, or is too large to
+   * hold. Every one of those is a reason for a checker to say nothing, so they collapse to one
+   * answer rather than being distinguished here.
+   */
+  async lines(rawPath: string): Promise<string[] | null> {
+    const files = await this.candidates(rawPath);
+    if (files.length !== 1) return null;
+    return this.textCache.get(files[0].path) ?? null;
+  }
+
+  /**
    * The canonical path and its length, or null if it is not a readable file inside the roots.
    * Canonical because the coverage note compares these against the paths `read_file` recorded,
    * which are canonicalised the same way — two spellings of one file must compare equal.
@@ -112,7 +132,12 @@ export class FileResolver {
     let lines: number | null = null;
     try {
       const canonical = assertWithinRoots(candidate, this.roots, { mustExist: true });
-      lines = (await readFile(canonical, "utf-8")).split("\n").length;
+      const raw = await readFile(canonical, "utf-8");
+      const split = raw.split("\n");
+      lines = split.length;
+      // Kept rather than re-read: counting the lines already cost the whole file, and the placement
+      // check needs the text of the very files the citation check has just opened.
+      if (raw.length <= MAX_CACHED_FILE_BYTES) this.textCache.set(canonical, split);
       this.canonical.set(candidate, canonical);
     } catch {
       lines = null;

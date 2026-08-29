@@ -2,6 +2,8 @@ import { runAgenticTask, type AgenticTaskParams } from "./agentic-task.js";
 import { verifyCitations, formatCitationReport, renderCitationBlock, type CitationCheck } from "./verify-citations.js";
 import { verifySymbols, formatSymbolReport } from "./verify-symbols.js";
 import { verifyPaths, formatPathReport, type PathCheck } from "./verify-paths.js";
+import { verifyPlacement, formatPlacementReport } from "./verify-placement.js";
+import { FileResolver } from "./resolve-path.js";
 import { effectiveRoots } from "./sandbox.js";
 import { AGENT_TOOLS, type AgentRunResult } from "../llm/agent-loop.js";
 import { resolveAgentConfig, resolveToolAgent, symbolCheckEnabled, type LocallyConfig } from "../config.js";
@@ -157,6 +159,11 @@ export async function exploreTask(config: LocallyConfig, params: ExploreTaskPara
   const roots = effectiveRoots(config);
   const notes: string[] = [];
 
+  // One resolver for all three filesystem checks. Each of them re-opens the files the answer cites,
+  // and the placement check needs their text rather than just their length, so sharing the cache is
+  // what keeps a fourth check from costing a fourth read of every file.
+  const resolver = new FileResolver(roots, params.path);
+
   // The tagged block is for the checkers below, not for the caller: verification reads it off the
   // raw text, and what comes back is the same citations as ordinary markdown.
   const text = renderCitationBlock(result.text);
@@ -168,8 +175,9 @@ export async function exploreTask(config: LocallyConfig, params: ExploreTaskPara
   // a subdirectory cites basenames from it, and resolving those against the roots alone reported
   // 19 of 19 correct citations as missing files (issue #16).
   try {
-    citations = await verifyCitations(result.text, roots, params.path);
-    const report = formatCitationReport(citations);
+    const checked = await verifyCitations(result.text, roots, params.path, resolver);
+    citations = checked.checks;
+    const report = formatCitationReport(checked);
     if (report) notes.push(report);
   } catch {
     // Verification is an add-on; never fail a good answer because the check itself broke.
@@ -188,8 +196,21 @@ export async function exploreTask(config: LocallyConfig, params: ExploreTaskPara
     try {
       // Paths a citation already covered are skipped, so one invented file is named once.
       const cited = new Set(citations.map((c) => c.citation.replace(/:\d+(?:-\d+)?$/, "")));
-      paths = await verifyPaths(text, roots, params.path, cited);
-      const report = formatPathReport(paths);
+      const checked = await verifyPaths(text, roots, params.path, cited, resolver);
+      paths = checked.checks;
+      const report = formatPathReport(checked);
+      if (report) notes.push(report);
+    } catch {
+      // As above.
+    }
+
+    try {
+      // Read off the raw answer, like the citation check, so the tagged block is still there to
+      // pair a name with a line. Citations that already failed are skipped: a bad line number and a
+      // missing file are one mistake, and it gets one footer line.
+      const failed = new Set(citations.filter((c) => !c.ok).map((c) => c.citation));
+      const checked = await verifyPlacement(result.text, roots, params.path, failed, resolver);
+      const report = formatPlacementReport(checked);
       if (report) notes.push(report);
     } catch {
       // As above.

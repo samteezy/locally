@@ -43,14 +43,20 @@ const NOT_FILES = new Set([
 /** A path token: optional directories, a filename, a dotted extension. No globs, no spaces. */
 const PATH_TOKEN_RE = /^\/?(?:[\w.@+~-]+\/)*([\w.@+~-]+)\.([A-Za-z][A-Za-z0-9]{0,7})$/;
 
-/** Bounds the argument list and the work; an answer naming more than this is not the common case. */
-const MAX_PATHS = 60;
+/** Bounds the work; an answer naming more than this is not the common case. */
+const MAX_PATHS = 100;
 
 export interface PathCheck {
   path: string;
   exists: boolean;
   /** Canonical path, when the token resolved to exactly one file. Absent when it was ambiguous. */
   resolvedPath?: string;
+}
+
+export interface PathReport {
+  checks: PathCheck[];
+  /** Distinct file paths the answer named, before the MAX_PATHS cap. */
+  named: number;
 }
 
 /**
@@ -96,19 +102,19 @@ export function extractPaths(text: string): string[] {
 /**
  * @param taskPath the directory the caller asked to be mapped, tried first when resolving.
  * @param skip paths already reported by another check, so one bad file is named once.
+ * @param resolver shared with the other checks so each file is read once, not three times.
  */
 export async function verifyPaths(
   text: string,
   roots: string[],
   taskPath?: string,
-  skip?: ReadonlySet<string>
-): Promise<PathCheck[]> {
-  const paths = extractPaths(text)
-    .filter((p) => !skip?.has(p))
-    .slice(0, MAX_PATHS);
-  if (paths.length === 0) return [];
+  skip?: ReadonlySet<string>,
+  resolver: FileResolver = new FileResolver(roots, taskPath)
+): Promise<PathReport> {
+  const named = extractPaths(text).filter((p) => !skip?.has(p));
+  const paths = named.slice(0, MAX_PATHS);
+  if (paths.length === 0) return { checks: [], named: named.length };
 
-  const resolver = new FileResolver(roots, taskPath);
   const checks: PathCheck[] = [];
   for (const path of paths) {
     try {
@@ -123,7 +129,7 @@ export async function verifyPaths(
       checks.push({ path, exists: true });
     }
   }
-  return checks;
+  return { checks, named: named.length };
 }
 
 /**
@@ -131,11 +137,15 @@ export async function verifyPaths(
  * follows. A clean run stays silent: the answer already carries a Citations: line, and a third
  * all-clear on every response is the kind of noise that gets all of them skipped.
  */
-export function formatPathReport(checks: PathCheck[]): string {
+export function formatPathReport(report: PathReport): string {
+  const { checks, named } = report;
   const missing = checks.filter((c) => !c.exists);
   if (missing.length === 0) return "";
 
-  const label = `${checks.length} file path${checks.length === 1 ? "" : "s"} checked`;
+  const label =
+    named > checks.length
+      ? `${checks.length} of ${named} file paths checked`
+      : `${checks.length} file path${checks.length === 1 ? "" : "s"} checked`;
   const verb = missing.length === 1 ? "does" : "do";
   const names = missing.map((c) => `\`${c.path}\``).join(", ");
 

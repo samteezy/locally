@@ -418,6 +418,41 @@ test("a citations block naming a file that does not exist is still caught", asyn
   expect(result.text).not.toContain("Files:");
 });
 
+// --- placement (issue #17) ----------------------------------------------------
+
+test("flags a symbol whose cited file keeps it somewhere else", async () => {
+  // The failure the footer used to pass: the file exists, the line exists, the name exists, and
+  // the answer still put them together wrong.
+  mkdirSync(join(base, "placement"), { recursive: true });
+  const lines = Array.from({ length: 200 }, (_, i) => (i % 5 === 4 ? "" : `const filler${i + 1} = ${i + 1};`));
+  lines[149] = "export const rollupSchema = 1;";
+  writeFileSync(join(base, "placement", "schemas.ts"), lines.join("\n"));
+
+  answerWith("<citations>\nplacement/schemas.ts:40 rollupSchema definition\n</citations>");
+  const result = await exploreTask(config, { task: "q", path: base });
+  expect(result.text).toContain("Placement:");
+  expect(result.text).toContain("nearest occurrence in that file is line 150");
+});
+
+test("says nothing about placement when the answer put the name in the right place", async () => {
+  answerWith("<citations>\nplacement/schemas.ts:150 rollupSchema definition\n</citations>");
+  const result = await exploreTask(config, { task: "q", path: base });
+  expect(result.text).not.toContain("Placement:");
+});
+
+test("LOCALLY_VERIFY_SYMBOLS=0 turns the placement check off too", async () => {
+  const original = process.env.LOCALLY_VERIFY_SYMBOLS;
+  process.env.LOCALLY_VERIFY_SYMBOLS = "0";
+  try {
+    answerWith("<citations>\nplacement/schemas.ts:40 rollupSchema definition\n</citations>");
+    const result = await exploreTask(config, { task: "q", path: base });
+    expect(result.text).not.toContain("Placement:");
+  } finally {
+    if (original === undefined) delete process.env.LOCALLY_VERIFY_SYMBOLS;
+    else process.env.LOCALLY_VERIFY_SYMBOLS = original;
+  }
+});
+
 test("an agent's systemPrompt replaces the explore contract rather than stacking on it", async () => {
   const agentConfig: LocallyConfig = {
     ...config,

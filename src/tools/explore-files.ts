@@ -78,6 +78,20 @@ export function rgIgnoreArgs(ignore: Iterable<string>): string[] {
   return args;
 }
 
+/**
+ * The flags that make ripgrep search the same tree the rest of the server can see.
+ *
+ * By default rg skips gitignored files and hidden ones. `buildTree` — the directory map injected
+ * into the task prompt — and `Read` walk the filesystem and honour only `IGNORED_DIRS`, so the map
+ * advertises files that a default rg search cannot find. That asymmetry is harmless in a search
+ * tool and fatal in a checker: it is what let `verify-symbols` report a name defined in a
+ * gitignored or dot-directory file as appearing nowhere in the tree (issue #17).
+ *
+ * Only verification uses these. The model's own `Grep`/`Glob` keep ripgrep's defaults, where
+ * skipping build output and vendored code is a feature rather than a lie.
+ */
+export const UNFILTERED_RG_ARGS = ["--hidden", "--no-ignore"];
+
 export function grepIgnoreArgs(ignore: Iterable<string>): string[] {
   const args: string[] = [];
   for (const p of ignore) {
@@ -175,11 +189,13 @@ async function listFilesWithRg(
   dirPath: string,
   filePattern: string | undefined,
   ignore: Set<string>,
-  maxFiles: number
+  maxFiles: number,
+  unfiltered = false
 ): Promise<string[] | null> {
   // Ignores go last: ripgrep resolves overlapping globs by last-match-wins, so a positive
   // `--glob alpha.ts` placed after `--glob !**/node_modules/**` would pull vendored files back in.
   const args = ["--files"];
+  if (unfiltered) args.push(...UNFILTERED_RG_ARGS);
   if (filePattern) args.push("--glob", filePattern);
   args.push(...rgIgnoreArgs(ignore), dirPath);
   try {
@@ -198,23 +214,40 @@ const MAX_NAME_MATCHES = 50;
 const MAX_NAME_CANDIDATES = 500;
 
 /**
- * Files anywhere under a root whose *name* is `name` — ripgrep first (it honours .gitignore),
- * Node walk as the fallback. Absolute paths.
+ * Files anywhere under a root whose *name* is `name` — ripgrep first, Node walk as the fallback.
+ * Absolute paths.
  *
  * This is how the citation checker resolves a partially-specified path. It replaced a whole-tree
  * index that listed every file under the roots and kept the first 20,000: in a monorepo that slice
  * is arbitrary and unordered, so an entire subtree could fall outside it and every citation into it
  * came back "file not found" (issue #16). One targeted search per unresolved path has no such cap.
+ *
+ * An *empty* ripgrep result is not an answer, only a filtered one: rg skips gitignored and hidden
+ * files that `buildTree` listed and `Read` can open, so a real file the model actually read came
+ * back "does not exist anywhere in the tree" (issue #17). A first pass at rg's defaults stays
+ * because it is the fast common case; nothing is reported missing on the strength of it.
  */
 export async function findFilesNamed(dirPath: string, name: string): Promise<string[]> {
-  const viaRg = (await hasRipgrep())
+  let viaRg = (await hasRipgrep())
     ? await listFilesWithRg(dirPath, name, IGNORED_DIRS, MAX_NAME_MATCHES)
     : null;
+  if (viaRg !== null && viaRg.length === 0) {
+    viaRg = await listFilesWithRg(dirPath, name, IGNORED_DIRS, MAX_NAME_MATCHES, true);
+  }
   // The Node fallback matches on `includes`, a superset of "named exactly this"; callers filter by
   // path suffix anyway, so over-returning here is harmless and under-returning would not be.
   const found =
     viaRg ?? (await walkFiles(dirPath, Number.MAX_SAFE_INTEGER, name, IGNORED_DIRS, MAX_NAME_CANDIDATES));
   return found.filter((f) => basename(f) === name).slice(0, MAX_NAME_MATCHES);
+}
+
+/**
+ * Every text file under a root, honouring only `IGNORED_DIRS` — the universe `buildTree` maps and
+ * `Read` can open, and therefore the universe a checker has to be able to see before it calls a
+ * name invented. The last-resort backstop in verify-symbols.ts, never a search path.
+ */
+export async function listAllFiles(dirPath: string, maxFiles: number): Promise<string[]> {
+  return walkFiles(dirPath, Number.MAX_SAFE_INTEGER, undefined, IGNORED_DIRS, maxFiles);
 }
 
 async function walkFiles(
