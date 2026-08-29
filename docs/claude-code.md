@@ -14,7 +14,7 @@ enforcement. Start at the top and only go further down if you need to.
 >
 > | Tool | Reference in Claude Code | Use for |
 > |------|--------------------------|---------|
-> | `explore_task` | `mcp__locally__explore_task` | Read-only Q&A, understanding, tracing a codebase |
+> | `explore_task` | `mcp__locally__explore_task` | Read-only: finding code, inventorying what exists, tracing where things live |
 > | `run_task` | `mcp__locally__run_task` | Drafting and routine edits (commit messages, boilerplate, scaffolding) |
 > | `usage_report` | `mcp__locally__usage_report` | Report how much work has been offloaded |
 >
@@ -41,8 +41,10 @@ The `locally` MCP server runs a smaller local model cheaply. Before doing
 low-stakes, mechanical work yourself, delegate it to keep it off the frontier
 model — then review the result before relying on it.
 
-- Understanding the codebase, tracing logic, or summarizing what exists:
+- Finding code, tracing where things live, or inventorying what exists:
   call `mcp__locally__explore_task` (read-only) instead of fanning out Grep/Read.
+  Ask it for facts and locations — keep review, audits and design judgment
+  on the frontier model.
 - Drafting commit messages, PR descriptions, changelog entries, boilerplate,
   scaffolding, and routine edits: call `mcp__locally__run_task`.
 - Pass the relevant directory as the `path` argument so the model gets a map to
@@ -87,16 +89,16 @@ for all projects):
 name: local-delegate
 description: >-
   Delegates low-stakes codebase exploration and routine writing/editing to the
-  locally MCP server (a cheap local model). Use for understanding code, drafting
-  commit messages or boilerplate, and mechanical edits — not for design or
-  high-stakes changes.
+  locally MCP server (a cheap local model). Use for finding code, drafting
+  commit messages or boilerplate, and mechanical edits — not for review, design,
+  or high-stakes changes.
 tools: mcp__locally__explore_task, mcp__locally__run_task, mcp__locally__usage_report
 ---
 
 You delegate work to the locally MCP server instead of doing it yourself.
 
-- For questions, code understanding, or summaries: use `explore_task` (read-only),
-  passing the relevant directory as `path`.
+- For finding code and factual what/where questions: use `explore_task`
+  (read-only), passing the relevant directory as `path`.
 - For drafting or routine edits: use `run_task`, passing `path` so the model can
   read and write files.
 - Return locally's output along with a one-line note on what you delegated. Flag
@@ -109,7 +111,7 @@ subagent has no native `Read`/`Edit`/`Bash`, so it must route through `locally`.
 
 **Invoke it** any of these ways:
 
-- Natural language: *"Use the local-delegate subagent to summarize the auth flow."*
+- Natural language: *"Use the local-delegate subagent to find every file in the auth flow."*
 - `@`-mention to guarantee it runs: `@agent-local-delegate draft a commit message`
 - Session-wide default: `claude --agent local-delegate` (the whole session runs as
   that subagent — useful for a dedicated "cheap" session).

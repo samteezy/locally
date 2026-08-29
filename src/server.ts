@@ -9,7 +9,7 @@ const SERVER_INSTRUCTIONS = `locally is your assistant's assistant. It runs smal
 
 Before doing low-stakes, repetitive, or mechanical work yourself, delegate it here to keep it off the frontier model:
 - Broad fan-out codebase searches — "where is X", how something works, naming-convention sweeps — the situations you'd otherwise spawn an Explore subagent for (explore_task). It returns a conclusion with file:line citations, not file dumps.
-- Answering questions about a codebase or summarizing what exists (explore_task)
+- Locating and inventorying what a codebase contains — what exists, where it lives, what a cited line says (explore_task). It reports what the code does and where it is; code review, audits, severity ratings and design judgment stay with you.
 - Boilerplate, scaffolding, and routine edits (run_task)
 
 Each result ends with a one-line footer showing the model used and how many tokens were generated locally. The output comes from a smaller model — skim it before relying on it, and re-do anything that needs frontier-level judgment yourself.
@@ -57,7 +57,7 @@ const EXPLORE_INPUT_SCHEMA = {
     task: {
       type: "string",
       description:
-        "What to find or understand, in natural language (e.g. \"where is the agentic loop and how does result caching work?\").",
+        "What to find, in natural language (e.g. \"where is the agentic loop and what handles result caching?\"). Ask for facts and locations — not for a review, a risk rating, or a recommendation.",
     },
     breadth: {
       type: "string",
@@ -74,7 +74,7 @@ const EXPLORE_INPUT_SCHEMA = {
  * response's `_meta`, so server.test.ts asserts it against package.json rather than leaving it
  * to drift.
  */
-const SERVER_VERSION = "0.5.0";
+const SERVER_VERSION = "0.5.1";
 
 export function createServer(config: LocallyConfig): Server {
   const server = new Server(
@@ -107,7 +107,7 @@ export function createServer(config: LocallyConfig): Server {
           openWorldHint: false,
         },
         description:
-          "Read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. It greps with ripgrep and reads targeted excerpts, returning a conclusion with file:line citations rather than file dumps. Before the answer comes back the server checks it: citations are re-resolved against the filesystem, file paths and asserted names are existence-checked, and any file the answer describes without ever having opened is named. Strongest at inventory work — list, enumerate, locate, \"where is X\", naming-convention sweeps. Weaker at open-ended \"explain how this is wired\" architecture questions, so verify those. The path is a starting point, not a boundary. Set breadth (\"medium\" / \"very thorough\"). Use for analysis, Q&A, and understanding — not for generating code.",
+          "Read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. It greps with ripgrep and reads targeted excerpts, returning a conclusion with file:line citations rather than file dumps. Before the answer comes back the server checks it: citations are re-resolved against the filesystem, file paths and asserted names are existence-checked, and any file the answer describes without ever having opened is named. Strongest at inventory work — list, enumerate, locate, \"where is X\", naming-convention sweeps. Weaker at open-ended \"explain how this is wired\" architecture questions, so verify those. The path is a starting point, not a boundary. Set breadth (\"medium\" / \"very thorough\"). It reports what the code does and where it is; it does not review, audit, rate, or recommend — ask it where and what, and keep whether and why on the frontier model.",
         inputSchema: EXPLORE_INPUT_SCHEMA,
       },
       {
@@ -122,7 +122,7 @@ export function createServer(config: LocallyConfig): Server {
           openWorldHint: false,
         },
         description:
-          "Generate or edit content with a local model to keep low-stakes work off the frontier model. Good for drafting commit messages, PR descriptions, and changelog entries, plus boilerplate, scaffolding, and routine code edits. The model runs agentically: it receives a directory map (when path is provided) then reads and writes files as needed. Use for writing, editing, and implementing — not open-ended exploration. Provide project-specific best practices in the task prompt, and review the output before relying on it.",
+          "Generate or edit content with a local model to keep low-stakes work off the frontier model. Good for drafting commit messages, PR descriptions, and changelog entries, plus boilerplate, scaffolding, and routine code edits. The model runs agentically: it receives a directory map (when path is provided) then reads and writes files as needed. Use for writing, editing, and implementing. It does the task it is given and stops: it will not explore beyond it, and does not volunteer a review, a critique, or a redesign of the code it touches — ask for any of those explicitly if you want them. Provide project-specific best practices in the task prompt, and review the output before relying on it.",
         inputSchema: TASK_INPUT_SCHEMA,
       },
       {

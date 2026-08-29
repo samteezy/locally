@@ -153,6 +153,34 @@ test("the prompt asks the model to separate what it read from what it inferred",
   expect(system).toContain("Before naming a SET of files");
 });
 
+test("the prompt bars verdicts and makes the model name the half it left out", async () => {
+  const fetchMock = vi.fn(async (_url: string, init: { body: string }) => {
+    void init;
+    return {
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => ({ choices: [{ message: { content: "ok" } }], usage: {} }),
+      text: async () => "",
+    };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  await exploreTask(config, { task: "q", path: base });
+
+  const [, init] = fetchMock.mock.calls[0];
+  const system = JSON.parse(init.body).messages.find((m: { role: string }) => m.role === "system").content;
+  // Issue #23. Asked whether this repository's shell allowlist was safe, a 9B model said it was and
+  // missed the `find -exec` / `npm run` bypass entirely — a confident verdict it had not earned
+  // (eval-runs/2026-06-28-security-analysis-locally-vs-explore.md). The contract keeps the
+  // what/where half and makes the model say which half it is not answering.
+  expect(system).toContain("findings, not an assessment");
+  expect(system).toContain("Out of scope");
+  // And the narrowing stops there: reporting a mechanism it actually read is still the job, so a
+  // later tightening into locate-only fails here rather than silently in an eval.
+  expect(system).toContain("Report what the code does and where it is");
+});
+
 test("a very thorough run that ends immediately is marked a shallow sweep", async () => {
   answerWith("Done.");
   const result = await exploreTask(config, { task: "q", path: base, breadth: "very thorough" });
