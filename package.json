@@ -1,6 +1,6 @@
 {
   "name": "locally-mcp",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "MCP server for delegating tasks to local or remote models via OpenAI-compatible endpoints",
   "license": "GPL-3.0",
   "repository": {

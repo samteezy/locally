@@ -41,6 +41,12 @@ export interface TransportConfig {
   allowedHosts?: string[];
   /** Origin hostnames accepted on `/mcp`. Defaults to `allowedHosts`. */
   allowedOrigins?: string[];
+  /**
+   * Shared secret required as `Authorization: Bearer <token>` on every `/mcp` request. Unset means
+   * no auth, which is only allowed on a loopback bind — binding any other host without a token is a
+   * startup error (`src/transport/auth.ts`). `LOCALLY_AUTH_TOKEN` is the env fallback.
+   */
+  authToken?: string;
 }
 
 export interface ToolRoutingConfig {

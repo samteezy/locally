@@ -155,6 +155,7 @@ There are two places config can come from, and they're meant for different thing
 | `agents`, `tools` routing | ❌ (nested) | ✅ |
 | `allowedRoots`, `ignorePatterns` | ❌ (array) | ✅ |
 | `allowedHosts`, `allowedOrigins` (HTTP) | ❌ (array) | ✅ |
+| `authToken` (HTTP) | ✅ env | ✅ |
 
 The clean way to combine them is `LOCALLY_CONFIG`: put that one env var in your client settings to name *which* config file to load, and keep the rich content in the file (see the [example under Usage](#local-mcp-stdio)).
 
@@ -263,6 +264,7 @@ These env vars are read as a **per-field fallback** — used both when no config
 | `LOCALLY_TRANSPORT` | `stdio` |
 | `LOCALLY_PORT` | `3000` |
 | `LOCALLY_HOST` | `127.0.0.1` |
+| `LOCALLY_AUTH_TOKEN` | *(unset — no auth on `/mcp`, and a non-loopback bind then fails at startup)* |
 | `LOCALLY_VERIFY_SYMBOLS` | `1` — set `0` (or `false`/`off`/`no`) to skip the `explore_task` symbol, file-path and placement checks |
 
 `timeout` and `maxTokens` are the exception: they have no env var and can only be set in the config file (or, for `maxTokens`, per call via the [`max_tokens` parameter](#shared-parameters)).
@@ -341,10 +343,30 @@ proxy, a container hostname — means listing it under `transport.allowedHosts` 
 { "transport": { "mode": "http", "allowedHosts": ["mcp.internal"], "allowedOrigins": ["mcp.internal"] } }
 ```
 
+That fence defends a *browser* — it stops a page on another origin from reaching the endpoint. It is
+not access control: a direct client sends whatever `Host` and `Origin` it likes. Access control is a
+shared token, and `/mcp` takes one:
+
+```json
+{ "transport": { "mode": "http", "authToken": "a-long-random-string" } }
+```
+
+Or `LOCALLY_AUTH_TOKEN` in the environment the server process runs in. Every `/mcp` request must then
+carry `Authorization: Bearer <token>` or it gets a `401`; `GET /health` stays open, since it is the
+liveness check and reports nothing.
+
+> **Binding a non-loopback host requires a token.** `LOCALLY_HOST=0.0.0.0` with no token configured
+> is a startup error, not a warning — the server exits rather than open `run_task`'s write, patch and
+> shell surface to the network unauthenticated. Set a token, or keep the default `127.0.0.1` bind.
+
 Register as a remote MCP in Claude Code:
 
 ```bash
 claude mcp add --transport http locally http://localhost:3000/mcp
+
+# With a token configured:
+claude mcp add --transport http locally http://localhost:3000/mcp \
+  --header "Authorization: Bearer a-long-random-string"
 ```
 
 ### Getting Claude Code to use locally
