@@ -7,6 +7,33 @@ fixes. "Breaking" below distinguishes the **MCP surface** (`explore_task`, `run_
 `usage_report` — what a client calls) from the **agent-loop surface** (the tools the local
 model is handed inside a run). The two break independently, and only the first affects callers.
 
+## [0.6.3] — 2026-08-29
+
+Route work to `explore_task` by how checkable the answer is, not by topic.
+
+The server instructions and the tool description disagreed. The instructions listed "how
+something works" as a job for `explore_task`. The description called the same question a
+weakness. The description also called the tool "strongest at inventory work". The stored eval
+runs do not support this. The worst run in `eval-runs/` is an inventory task with 5 hard
+errors. The baseline had 0. Two "how does this work" runs each scored 0 hard errors. No
+schema, tool, or behavior changes.
+
+### Changed
+- **`SERVER_INSTRUCTIONS` and the `explore_task` description now give three tiers.** The tool
+  is accurate and complete when the answer is text in the code. It is accurate but can be
+  incomplete when you ask how something works. It can be confidently wrong when it must derive
+  the answer.
+- **The derived-answer tier names four things to check.** These are a default value, an order
+  of precedence, a complete count, and a rule about which code runs when. Each one is a
+  measured failure in `eval-runs/`.
+- **`README.md`, `CLAUDE.md`, and `docs/claude-code.md` now give the same three tiers.** All
+  four surfaces stated the old topic-based routing. They now agree.
+
+### Fixed
+- **`docs/claude-code.md` showed a stale footer example.** The example named a model that this
+  project does not run. It also showed ~12k tokens read. A real sweep reads 138k or more. The
+  example is now a footer from a stored eval run.
+
 ## [0.6.2] — 2026-08-29
 
 Fix six lines that the 0.6.1 rewrite left wrong, and settle the scope of the rule.

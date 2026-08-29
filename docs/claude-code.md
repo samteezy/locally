@@ -6,7 +6,9 @@ with its built-in tools (`Read`, `Grep`, `Glob`, `Edit`, `Bash`, …) and rarely
 reaches for an MCP server's tools on its own. To actually keep that work off the
 frontier model, you have to steer Claude toward `locally`.
 
-This guide covers the supported ways to do that, from the lightest nudge to hard
+The server does ship its own MCP instructions describing when to delegate and how
+far to trust the result, so a client that surfaces them gets that much for free.
+This guide covers the ways to push harder, from the lightest nudge to hard
 enforcement. Start at the top and only go further down if you need to.
 
 > `locally` exposes three tools. In Claude Code they're namespaced by the server
@@ -14,7 +16,7 @@ enforcement. Start at the top and only go further down if you need to.
 >
 > | Tool | Reference in Claude Code | Use for |
 > |------|--------------------------|---------|
-> | `explore_task` | `mcp__locally__explore_task` | Read-only: finding code, inventorying what exists, tracing where things live |
+> | `explore_task` | `mcp__locally__explore_task` | Read-only: finding code — names, paths, line numbers, pattern matches |
 > | `run_task` | `mcp__locally__run_task` | Drafting and routine edits (commit messages, boilerplate, scaffolding) |
 > | `usage_report` | `mcp__locally__usage_report` | Report how much work has been offloaded |
 >
@@ -41,17 +43,24 @@ The `locally` MCP server runs a smaller local model cheaply. Before doing
 low-stakes, mechanical work yourself, delegate it to keep it off the frontier
 model — then review the result before relying on it.
 
-- Finding code, tracing where things live, or inventorying what exists:
-  call `mcp__locally__explore_task` (read-only) instead of fanning out Grep/Read.
-  Ask it for facts and locations — keep review, audits and design judgment
-  on the frontier model.
+- Finding code: call `mcp__locally__explore_task` (read-only) instead of fanning
+  out Grep/Read. Pass the relevant directory as the `path` argument so the model
+  gets a map to explore from.
 - Drafting commit messages, PR descriptions, changelog entries, boilerplate,
   scaffolding, and routine edits: call `mcp__locally__run_task`.
-- Pass the relevant directory as the `path` argument so the model gets a map to
-  explore from.
 
-Keep design decisions, tricky debugging, and high-stakes edits on the frontier
-model. Always skim locally's output — it comes from a smaller model.
+Route by how checkable the answer is, not by topic:
+
+- **Trust it** for names, paths, line numbers, and the set of files matching a
+  pattern. This is what it is reliably good at.
+- **Expect gaps** on "how does this work" — the answer is usually correct but
+  stops short of the full call path.
+- **Check it against source** whenever the answer had to be derived: a default
+  value, a resolution order, an exhaustive count, or a rule about what runs
+  when. These are its characteristic failures.
+
+Keep design decisions, tricky debugging, high-stakes edits, review, audits and
+severity calls on the frontier model.
 ```
 
 This repository already does a minimal version of this — its own `CLAUDE.md` says
@@ -104,6 +113,9 @@ You delegate work to the locally MCP server instead of doing it yourself.
 - Return locally's output along with a one-line note on what you delegated. Flag
   anything that looks wrong — the output comes from a smaller model and should be
   reviewed.
+- Before returning an `explore_task` answer, flag any claim it had to derive
+  rather than read: a default value, a resolution order, an exhaustive count, or
+  a rule about what runs when. Those are its characteristic failures.
 ```
 
 `tools` is an allowlist: listing only the `mcp__locally__*` tools means this
@@ -200,7 +212,7 @@ to block the call and feed a message back to Claude:
 `locally` makes its own offloading visible:
 
 - **Per task:** each `explore_task` / `run_task` result ends with a footer like
-  `_locally · qwen3:8b · 3 iters · 7 files read · 48s · ~12k read locally · ~1.2k returned_`.
+  `_locally · ornith-1.0-9b-q6_k_xl · 7 iters · 17 files read · 1m54s · ~138k read locally · ~5.8k returned_`.
   If you see it, the work ran locally. `(hit cap)` beside the iteration count means the run
   ran out of its iteration budget rather than finishing.
 - **Cumulative:** ask Claude *"how much have we offloaded to locally?"* (or call

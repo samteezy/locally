@@ -103,7 +103,7 @@ The `io.modelcontextprotocol/tasks` extension is the natural home for locally's 
 ## Practices
 Try to use locally yourself when working in this repo - but check its work.
 
-For codebase Q&A, "where is X", how-something-works, and naming-convention sweeps, prefer delegating to `explore_task` (set `breadth` to `very thorough` for wide sweeps) instead of spawning a native Explore subagent — then verify the result before relying on it. Ask it for facts and locations; keep review, audits, severity calls and design judgment on the frontier model (issue #23).
+For codebase Q&A, prefer delegating to `explore_task` (set `breadth` to `very thorough` for wide sweeps) instead of spawning a native Explore subagent — then verify the result before relying on it. Route by how checkable the answer is, not by topic. Names, paths, line numbers and pattern matches come back accurate and complete. "How does this work" comes back accurate but often shallow — it stops where the call path leaves the obvious. Anything it must *derive* — a default value, a resolution order, an exhaustive count, a rule about what runs when — accounts for most of the hard errors in `eval-runs/`; check those against source yourself. Keep review, audits, severity calls and design judgment on the frontier model (issue #23).
 
 When adding or updating functionality, before committing, check that the README is still accurate and doesn't need updating.
 
