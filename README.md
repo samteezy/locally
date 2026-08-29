@@ -4,7 +4,7 @@ If Claude is your assistant, locally is your assistant's assistant.
 
 Frontier models are expensive. locally runs on your own hardware for free — so when Claude needs to explore a codebase, draft some code, or answer a low-stakes question, it can hand that off to a smaller local model instead of burning tokens doing it itself.
 ---
-locally is an MCP server that connects to any OpenAI-compatible endpoint — llama.cpp, LM Studio, vLLM, or even (if you really want) a different cloud provider. Two tools cover the main delegation patterns: **exploration** (understanding a codebase) and **generation** (writing and editing files). Each can be routed to a different model if desired.
+locally is an MCP server that connects to any OpenAI-compatible endpoint — llama.cpp, LM Studio, vLLM, or even (if you really want) a different cloud provider. Two tools cover the main delegation patterns: **exploration** (finding your way around a codebase) and **generation** (writing and editing files). Each can be routed to a different model if desired.
 
 ## Quickstart
 
@@ -37,9 +37,11 @@ That's the whole happy path. Want multiple models, route explore vs. run to diff
 
 ### `explore_task`
 
-A read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. It greps with ripgrep and reads targeted excerpts, returning a conclusion with `file:line` citations rather than file dumps. Read-only — the model can call `Grep`, `Glob` and `Read` but cannot write. Use for analysis, Q&A, and understanding.
+A read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. It greps with ripgrep and reads targeted excerpts, returning a conclusion with `file:line` citations rather than file dumps. Read-only — the model can call `Grep`, `Glob` and `Read` but cannot write. Use it for facts and locations.
 
 It is strongest at inventory work — list, enumerate, locate, "where is X", naming-convention sweeps — and weaker at open-ended "explain how this is wired" questions, so verify those before relying on them.
+
+**It finds; it does not judge.** Ask it where something is, what exists, and what the code does — not whether the code is any good. Asked to audit this repository's own shell allowlist, the 9B model behind it missed the `find -exec` and `npm run` bypasses entirely and concluded the surface was safe: a confident false negative on the single worst issue ([the run](eval-runs/2026-06-28-security-analysis-locally-vs-explore.md)). So the contract bars verdicts — quality, correctness, severity, recommendations — and a task that asks for one is answered with the factual what/where half plus a line naming the half it left out. Enumerate the attack surface with it; do the exploit reasoning yourself. Like the `LIKELY:` marker below this is a request to the model, not something the server enforces, and it is the weaker half of the change: asked point-blank to review this repository's own error handling and say whether it was correct, the 9B returned a full review anyway — both with the rule as a closing bullet and with it stated at the top of the contract. What keeps the work away is the description above, not the contract: don't send it the task. Reporting a mechanism it actually read stays in scope: on the needle eval that reasoning beat the frontier agent's.
 
 Set `breadth` to tune how widely it searches: `"medium"` (default) checks the most likely locations; `"very thorough"` sweeps multiple locations and naming conventions across the tree. Breadth also raises the default iteration budget (`medium` → 8, `very thorough` → 20); an explicit `max_iterations` overrides it. When `path` is omitted the working directory is mapped, so a path is optional.
 
@@ -73,7 +75,7 @@ The model is also asked to name the search behind any list it produces, so a par
 
 ### `run_task`
 
-Generate code, draft content, or implement changes. The model runs an agentic loop with full read/write access: it can call `Grep`, `Glob`, `Read`, `write_file`, `patch_file`, and `run_shell` (see below) before producing output. Use for writing, editing, and implementing.
+Generate code, draft content, or implement changes. The model runs an agentic loop with full read/write access: it can call `Grep`, `Glob`, `Read`, `write_file`, `patch_file`, and `run_shell` (see below) before producing output. Use for writing, editing, and implementing. It does the task it is given and stops — it will not explore beyond it, and does not volunteer a review or a redesign of the code it touches, so ask for those explicitly if you want them.
 
 ### `usage_report`
 
@@ -125,7 +127,7 @@ would sidestep the `allowedRoots` fence, so they are omitted and the confined `R
 A common pattern: explore first, then implement from the findings:
 
 ```
-1. explore_task(task="summarize the auth flow", path="/app/src") → findings
+1. explore_task(task="list every file and function in the auth flow, with citations", path="/app/src") → findings
 2. run_task(task="refactor auth.ts based on these findings: <findings>", path="/app/src")
 ```
 

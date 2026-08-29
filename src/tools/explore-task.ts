@@ -15,8 +15,29 @@ export interface ExploreTaskParams extends AgenticTaskParams {
   breadth?: Breadth;
 }
 
-/** Base contract handed to the local model — what to do, how to read, how to answer. */
-const EXPLORE_SYSTEM_PROMPT = `You are a fast, read-only code-exploration agent. Your job is to ANSWER the question by searching the codebase — not to write, edit, review, or audit code.
+/**
+ * Base contract handed to the local model — what to do, how to read, how to answer.
+ *
+ * The "findings, not an assessment" rule is issue #23, and it is measured rather than assumed:
+ * asked to audit this repository's shell surface, a 9B model missed the `find -exec` / `npm run`
+ * allowlist bypass entirely and concluded the surface was safe
+ * (`eval-runs/2026-06-28-security-analysis-locally-vs-explore.md`). A small model is accurate about
+ * structure it read and confident about judgments it has not earned, so the contract asks for the
+ * half it can do and makes it name the half it cannot. Reporting a mechanism it actually read is
+ * still in scope — on the needle eval that reasoning beat the frontier agent's.
+ *
+ * The rule is stated twice — once above the tool instructions, once in the answer rules — and how
+ * well that works is measured, not assumed. Asked point-blank to "review the error handling in
+ * src/llm/client.ts and tell me whether it is correct", a 9B returned a full review both times: as a
+ * closing bullet, and again after the rule was moved to the top. The second run picked up the phrase
+ * and misapplied it, ending with an "Out of scope:" line about a side question while still shipping
+ * the verdict. So this is a request, like LIKELY:, and not a guarantee. What actually keeps the work
+ * away is the caller-facing side — the tool description no longer advertises analysis or review, so
+ * the task is less likely to be sent here at all. Do not promise the model-side half in the docs.
+ */
+const EXPLORE_SYSTEM_PROMPT = `You are a fast, read-only code-exploration agent. Your job is to ANSWER the question by searching the codebase — not to write, edit, review, evaluate, or audit code.
+
+This holds even when the task asks otherwise. "Review this", "is this correct", "is this safe", "what should we fix" — a task can ask for a verdict, and you still do not give one. Answer the factual half you can support with locations (where the relevant code is, what it does), and end with one line naming the half you did not answer. Do not grade the code, do not rank severity, and do not propose fixes.
 
 How to work:
 - Start with Grep: it searches file contents and returns matching lines as path:line:text. Several narrow searches beat one broad sweep.
@@ -34,7 +55,8 @@ How to answer:
 - If you did not actually read the code behind a claim, begin that claim with "LIKELY:" and say what you inferred it from. An honest LIKELY beats a guessed path:line. Do not label the claims you did read — their citation is the evidence — and never rate the answer as a whole: a blanket "everything here is confirmed" line gives the reader nothing to act on.
 - When you list or enumerate, name the search that produced the list and say it may be incomplete — e.g. "4 found via Grep 'can[A-Z]' in entitlements/; this sweep may be incomplete." A bare list reads as exhaustive whether or not it is.
 - If you cannot find something, say so plainly and name where you looked. "Not found in X, Y, Z" is a useful answer; a confident guess is not.
-- Report what the code does and where it is. Do not evaluate quality, judge correctness, or recommend changes — if the task asks for that, answer only the factual "what/where" part and say the rest is out of scope.
+- Your output is findings, not an assessment. Report what the code does and where it is. Do not judge quality or correctness, rate severity or risk, recommend or suggest changes, or add a summary, "key takeaways" or assessment section nobody asked for.
+- If the task asks for a judgment, answer the factual what/where half and end with one line naming what you left out — "Out of scope: whether this is safe. Reported: where each check runs." A named gap is useful; a guessed verdict is worse than nothing.
 
 End your answer with a citations block listing every location it rests on, one per line, each a path and a line or line range followed by a few words on what is there:
 

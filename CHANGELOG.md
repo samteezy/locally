@@ -7,6 +7,44 @@ fixes. "Breaking" below distinguishes the **MCP surface** (`explore_task`, `run_
 `usage_report` — what a client calls) from the **agent-loop surface** (the tools the local
 model is handed inside a run). The two break independently, and only the first affects callers.
 
+## [0.5.1] — 2026-08-29
+
+Focus `explore_task` on finding, not evaluating (issue #23).
+
+The tools behind `locally` are small models. They are accurate about structure they read and
+confident about judgments they have not earned — and every place the server advertised "analysis",
+"understanding" or "summarizing what exists" was an invitation to spend the caller's time on a bad
+verdict. Two of this repository's own eval runs are the evidence: asked to audit the shell
+allowlist, the model missed the `find -exec` and `npm run` bypasses entirely and concluded the
+surface was safe (a confident false negative on the worst issue), and the config-surface run's five
+hard errors were all the same failure — a claim asserted at a confidence the run had not earned.
+
+Nothing in the schema or the behaviour changes; what narrows is what the tools promise.
+
+### Changed
+- **The `explore_task` contract bars verdicts.** Its output is findings, not an assessment: no
+  judging quality or correctness, no severity or risk ratings, no recommendations, and no summary
+  or "key takeaways" section nobody asked for. A task that asks for one is answered with the factual
+  what/where half plus a line naming what was left out — "Out of scope: whether this is safe.
+  Reported: where each check runs." A named gap is useful to the caller; a guessed verdict is worse
+  than nothing. The rule is stated at the top of the contract as well as
+  in the answer rules, and how far that gets is measured rather than assumed: asked point-blank to
+  review this repository's own client error handling and say whether it is correct, a 9B returned a
+  full review in both positions — the second run picking up the phrase and ending with an "Out of
+  scope:" line about a side question while still shipping the verdict. Like the `LIKELY:` marker
+  this is a request to the model, not something the server enforces. The caller-facing half below is
+  what actually keeps such a task from arriving.
+- **Reporting a mechanism it actually read is still in scope.** The narrowing is "no verdicts",
+  not "locate only" — on the needle eval that reasoning beat the frontier agent's, and a test now
+  fails if a later tightening drops it.
+- **The tool descriptions and server instructions say the same thing.** `explore_task` no longer
+  reads "use for analysis, Q&A, and understanding"; it reports what the code does and where it is,
+  and review, audits, severity calls and design judgment stay with the caller. `run_task` gains the
+  same scope discipline from the other direction: it does the task it is given and stops, rather
+  than volunteering a review or a redesign of the code it touches.
+- **README, `docs/claude-code.md` and `CLAUDE.md`** follow, including the delegation snippets and
+  the `local-delegate` subagent, whose examples asked for summaries.
+
 ## [0.5.0] — 2026-08-29
 
 Give the tree one ignore policy, and let git own it (issue #22).
