@@ -118,6 +118,11 @@ Technical English (ASD-STE100). Use the `simple-english` skill for this. It appl
   `run_shell` rejection messages.
 - `CHANGELOG.md` and the technical documentation.
 
+`README.md` is exempt from the strict pass. Keep it accurate and current, but write it in the
+project's own voice — it is a page a person reads to decide whether to use locally, and the STE
+rules flatten the nuance that job needs. The clarity rules still apply in spirit: short sentences,
+active voice, no slop.
+
 Source-code comments are exempt. They explain a decision to a person who reads the code, which is
 a different job from instructing a model, and this file is full of them on purpose.
 

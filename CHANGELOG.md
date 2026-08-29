@@ -7,6 +7,32 @@ fixes. "Breaking" below distinguishes the **MCP surface** (`explore_task`, `run_
 `usage_report` — what a client calls) from the **agent-loop surface** (the tools the local
 model is handed inside a run). The two break independently, and only the first affects callers.
 
+## [0.6.2] — 2026-08-29
+
+Fix six lines that the 0.6.1 rewrite left wrong, and settle the scope of the rule.
+
+The rewrite touched every string in the project. A review of the result found five statements
+that are inaccurate, and one rule that contradicts itself. No schema, tool, or behavior changes.
+
+### Fixed
+- **`Grep` named a parameter that does not exist.** A capped result told the model to "set
+  `file_pattern`". The parameter is `glob`. A model that obeyed the instruction sent an unknown
+  argument and got no narrowing.
+- **`run_shell` stated the wrong default for `cwd`.** The description said the default is the
+  working directory of the process. An omitted `cwd` gets the path of the task, or the first
+  allowed root. The description now says that.
+- **The `explore_task` description overclaimed the checks.** It said the server resolves each
+  citation, and checks that each file path and each asserted name exists. Citations stop at 200,
+  and paths and names stop at 100 each. `LOCALLY_VERIFY_SYMBOLS=0` turns three of the checks off.
+  The description now says that each check states how much of the answer it covered.
+- **Two `Fix:` lines kept the old form.** The HTTP-status line in `src/llm/client.ts` was the
+  last string in `src/` that said "verify". Both lines are now short sentences that say "check".
+- **The coverage note was wrong in the singular.** It rendered "this answer names 1 file that
+  exist". The singular is the common case.
+- **The rule for `README.md` contradicted itself.** `CLAUDE.md` put all technical documentation
+  under the strict pass. `CHANGELOG.md` exempted the README. `CLAUDE.md` now holds one rule:
+  keep the README accurate and current, and write it in the voice of the project.
+
 ## [0.6.1] — 2026-08-29
 
 Rewrite every instruction, description, and report line in Simplified Technical English.
@@ -37,7 +63,8 @@ Technical English to that text. No schema, tool, or behavior changes.
   and `config` (not configuration or settings) everywhere in model-facing text.
 
 ### Not changed
-- `README.md`. Its voice needs more nuance than a mechanical pass gives it.
+- `README.md`. Its voice needs more nuance than a mechanical pass gives it. It stays exempt from
+  the strict pass by standing rule, and stays accurate by the usual one.
 - The doc comments in the source. They explain a decision to a person who reads the code, which
   is a different job from instructing a model.
 - Behavior. The test suite is the evidence: the assertions that pinned the old wording were

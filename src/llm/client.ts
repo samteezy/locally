@@ -182,8 +182,8 @@ export async function runCompletionWithTools(
       origin: "upstream",
       retriable: transient,
       fix: transient
-        ? "the model endpoint is overloaded or erroring (5xx/429) — wait and retry; this is the endpoint, not locally."
-        : "the model endpoint rejected the request — verify the configured model exists on the endpoint; this is the endpoint, not locally.",
+        ? "the model endpoint is overloaded or erroring (5xx/429). Wait and retry. The fault is at the endpoint, not in locally."
+        : "the model endpoint rejected the request. Check that the configured model exists on the endpoint. The fault is at the endpoint, not in locally.",
     });
   }
 

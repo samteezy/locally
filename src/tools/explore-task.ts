@@ -153,7 +153,7 @@ function coverageNote(
 
   const shown = unread.slice(0, MAX_LISTED_UNREAD).map((p) => `\`${p}\``).join(", ");
   const more = unread.length > MAX_LISTED_UNREAD ? `, and ${unread.length - MAX_LISTED_UNREAD} more` : "";
-  return `_Coverage: this answer names ${named.size} file${named.size === 1 ? "" : "s"} that exist. The run opened, searched, or listed ${named.size - unread.length} of them. Described but never looked at: ${shown}${more}._`;
+  return `_Coverage: this answer names ${named.size} file${named.size === 1 ? " that exists" : "s that exist"}. The run opened, searched, or listed ${named.size - unread.length} of them. Described but never looked at: ${shown}${more}._`;
 }
 
 export async function exploreTask(config: LocallyConfig, params: ExploreTaskParams): Promise<AgentRunResult> {
