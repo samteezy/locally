@@ -43,7 +43,7 @@ export const RUN_SHELL_SCHEMA: Record<string, unknown> = {
     },
     cwd: {
       type: "string",
-      description: "Working directory. The default is the working directory of the process.",
+      description: "Working directory. The default is the path of the task, or the first allowed root.",
     },
   },
   required: ["command", "args"],

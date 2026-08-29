@@ -79,7 +79,7 @@ const EXPLORE_INPUT_SCHEMA = {
  * response's `_meta`, so server.test.ts asserts it against package.json rather than leaving it
  * to drift.
  */
-const SERVER_VERSION = "0.6.1";
+const SERVER_VERSION = "0.6.2";
 
 export function createServer(config: LocallyConfig): Server {
   const server = new Server(
@@ -114,7 +114,7 @@ export function createServer(config: LocallyConfig): Server {
         description:
           "Read-only search across a codebase with a local model. It is the local-model equivalent of an Explore subagent.\n\n" +
           "It searches file contents with ripgrep and reads short excerpts. It returns a conclusion with file:line citations, not file dumps.\n\n" +
-          "The server checks the answer before it comes back. It resolves each citation against the filesystem again. It checks that each file path and each asserted name exists. It names each file that the answer describes but never opened.\n\n" +
+          "The server checks the answer before it comes back. It resolves the citations against the filesystem again. It checks that the file paths and the asserted names exist. Each check states how much of the answer it covered. It names each file that the answer describes but never opened.\n\n" +
           "It is strongest at inventory work: list, enumerate, locate, \"where is X\", and naming-convention sweeps. It is weaker at open-ended \"explain how this is wired\" questions, so check those answers.\n\n" +
           "The path is a starting point, not a boundary. Set breadth to \"medium\" or \"very thorough\".\n\n" +
           "It reports what the code does and where it is. It is not for review, audits, ratings, or recommendations. Ask it where and what. Keep whether and why on the frontier model.",

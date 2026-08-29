@@ -50,5 +50,5 @@ export function formatLocallyError(err: unknown): string {
   }
 
   const message = err instanceof Error ? err.message : String(err);
-  return `[locally error: internal — local]\n${message}\nFix: this is an unexpected error inside locally; check the server logs and retry.`;
+  return `[locally error: internal — local]\n${message}\nFix: this is an unexpected error inside locally. Check the server logs and retry.`;
 }

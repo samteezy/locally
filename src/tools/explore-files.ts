@@ -127,7 +127,7 @@ function capResults(output: string, maxResults: number): string {
   if (lines.length <= maxResults) return output;
   const kept = lines.slice(0, maxResults).join("\n");
   const dropped = lines.length - maxResults;
-  return `${kept}\n… ${dropped} more matching line${dropped === 1 ? "" : "s"} not shown — narrow the query or set file_pattern.`;
+  return `${kept}\n… ${dropped} more matching line${dropped === 1 ? "" : "s"} not shown. Narrow the query or set glob.`;
 }
 
 /**
