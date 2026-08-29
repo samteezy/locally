@@ -142,3 +142,50 @@ test("an unrecognised value leaves the symbol check on", () => {
     withSymbolEnv(value, () => expect(symbolCheckEnabled()).toBe(true));
   }
 });
+
+test("an agent inherits the default's sampling and prompt settings", () => {
+  const config = {
+    default: { baseUrl: "http://a/v1", model: "m", apiKey: "", temperature: 0.7, maxIterations: 10 },
+    agents: { fast: { model: "small" } },
+  };
+  const resolved = resolveAgentConfig(config, "fast");
+  expect(resolved.model).toBe("small");
+  expect(resolved.temperature).toBe(0.7);
+  expect(resolved.maxIterations).toBe(10);
+});
+
+test("an agent's own sampling and prompt settings win over the default's", () => {
+  const config = {
+    default: { baseUrl: "http://a/v1", model: "m", apiKey: "", temperature: 0.7, maxIterations: 10 },
+    agents: {
+      explorer: {
+        temperature: 0,
+        topP: 0.9,
+        maxIterations: 6,
+        systemPrompt: "its own contract",
+        extraBody: { reasoning_effort: "none" },
+      },
+    },
+  };
+  const resolved = resolveAgentConfig(config, "explorer");
+  expect(resolved.temperature).toBe(0);
+  expect(resolved.topP).toBe(0.9);
+  expect(resolved.maxIterations).toBe(6);
+  expect(resolved.systemPrompt).toBe("its own contract");
+  expect(resolved.extraBody).toEqual({ reasoning_effort: "none" });
+});
+
+test("unset sampling stays undefined rather than defaulting to a value", () => {
+  const resolved = resolveAgentConfig({ default: { baseUrl: "http://a/v1", model: "m", apiKey: "" } });
+  expect(resolved.temperature).toBeUndefined();
+  expect(resolved.topP).toBeUndefined();
+  expect(resolved.extraBody).toBeUndefined();
+});
+
+test("an agent's extraBody replaces the default's rather than merging into it", () => {
+  const config = {
+    default: { baseUrl: "http://a/v1", model: "m", apiKey: "", extraBody: { reasoning_effort: "high", seed: 1 } },
+    agents: { quiet: { extraBody: { reasoning_effort: "none" } } },
+  };
+  expect(resolveAgentConfig(config, "quiet").extraBody).toEqual({ reasoning_effort: "none" });
+});

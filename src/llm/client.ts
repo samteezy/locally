@@ -6,6 +6,10 @@ export interface LlmConfig {
   apiKey: string;
   maxTokens?: number;
   timeout?: number; // seconds; default 600
+  temperature?: number;
+  topP?: number;
+  /** Endpoint-specific fields merged into the request body. See AgentConfig.extraBody. */
+  extraBody?: Record<string, unknown>;
 }
 
 export interface ToolDefinition {
@@ -85,9 +89,23 @@ export async function runCompletionWithTools(
     body.max_tokens = config.maxTokens;
   }
 
+  if (config.temperature !== undefined) {
+    body.temperature = config.temperature;
+  }
+
+  if (config.topP !== undefined) {
+    body.top_p = config.topP;
+  }
+
   if (tools && tools.length > 0) {
     body.tools = tools;
     body.tool_choice = "auto";
+  }
+
+  // Last, so the operator's config can override anything above it — including max_tokens for an
+  // endpoint that spells it differently. This comes from the config file, not from the model.
+  if (config.extraBody) {
+    Object.assign(body, config.extraBody);
   }
 
   const headers: Record<string, string> = {

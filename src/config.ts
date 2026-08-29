@@ -8,6 +8,25 @@ export interface AgentConfig {
   apiKey?: string;
   maxTokens?: number;
   timeout?: number; // seconds
+  /**
+   * Replaces the tool's own system prompt for this agent, rather than being appended to it. A model
+   * fine-tuned against a fixed exploration harness expects its own contract; handing it ours on top
+   * is what wastes the fine-tune.
+   */
+  systemPrompt?: string;
+  /** Sent only when set, so the default stays "let the endpoint decide". */
+  temperature?: number;
+  topP?: number;
+  /**
+   * Merged into the request body last, for endpoint-specific knobs locally has no business
+   * guessing at. Turning Qwen reasoning off is `reasoning_effort` on Ollama and
+   * `chat_template_kwargs: { enable_thinking: false }` on llama.cpp and vLLM; rather than
+   * detect the endpoint, let whoever configured it say which. Set by the operator in the config
+   * file, never by the model, so it is allowed to override anything above it.
+   */
+  extraBody?: Record<string, unknown>;
+  /** Default loop budget for this agent. An explicit max_iterations on the call still wins. */
+  maxIterations?: number;
 }
 
 export interface TransportConfig {
@@ -51,6 +70,11 @@ export interface ResolvedAgentConfig {
   apiKey: string;
   maxTokens?: number;
   timeout?: number; // seconds
+  systemPrompt?: string;
+  temperature?: number;
+  topP?: number;
+  extraBody?: Record<string, unknown>;
+  maxIterations?: number;
 }
 
 /**
@@ -111,8 +135,16 @@ export function resolveAgentConfig(config: LocallyConfig, agentName?: string): R
   const apiKey = defaults.apiKey ?? process.env.LOCALLY_API_KEY ?? "";
   const maxTokens = defaults.maxTokens;
 
+  const inherited = {
+    systemPrompt: defaults.systemPrompt,
+    temperature: defaults.temperature,
+    topP: defaults.topP,
+    extraBody: defaults.extraBody,
+    maxIterations: defaults.maxIterations,
+  };
+
   if (!agentName) {
-    return { baseUrl, model, apiKey, maxTokens, timeout: defaults.timeout };
+    return { baseUrl, model, apiKey, maxTokens, timeout: defaults.timeout, ...inherited };
   }
 
   const override = config.agents?.[agentName];
@@ -126,6 +158,13 @@ export function resolveAgentConfig(config: LocallyConfig, agentName?: string): R
     apiKey: override.apiKey ?? apiKey,
     maxTokens: override.maxTokens ?? maxTokens,
     timeout: override.timeout ?? defaults.timeout,
+    systemPrompt: override.systemPrompt ?? inherited.systemPrompt,
+    temperature: override.temperature ?? inherited.temperature,
+    topP: override.topP ?? inherited.topP,
+    // Replaced wholesale, not merged: a half-applied set of endpoint knobs is harder to reason
+    // about than either one on its own.
+    extraBody: override.extraBody ?? inherited.extraBody,
+    maxIterations: override.maxIterations ?? inherited.maxIterations,
   };
 }
 

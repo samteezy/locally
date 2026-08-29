@@ -45,6 +45,7 @@ function fakeTool(name: string, handler: AgentTool["handler"]): AgentTool {
   return {
     definition: { type: "function", function: { name, description: "", parameters: {} } },
     handler,
+    fence: { pathKey: "path", mustExist: true },
   };
 }
 
@@ -218,4 +219,64 @@ test("the hook cannot push the loop past its iteration budget", async () => {
   expect(hook).not.toHaveBeenCalled();
   expect(result.text).toBe("Done.");
   expect(result.cappedAtMaxIterations).toBe(false);
+});
+
+test("runs a turn's tool calls concurrently and pushes results in call order", async () => {
+  // Each handler blocks until every one of them has started. If dispatch were serial the first
+  // would wait forever, so reaching the assertions at all is the proof of concurrency.
+  const started: string[] = [];
+  let release!: () => void;
+  const allStarted = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  const slow = (label: string) => async () => {
+    started.push(label);
+    if (started.length === 3) release();
+    await allStarted;
+    return `${label} output`;
+  };
+
+  scriptFetch([
+    {
+      tool_calls: [
+        toolCall("a", { path: "/x" }, "call-a"),
+        toolCall("b", { path: "/y" }, "call-b"),
+        toolCall("c", { path: "/z" }, "call-c"),
+      ],
+    },
+    { content: "done" },
+  ]);
+
+  const messages: Message[] = [{ role: "user", content: "go" }];
+  await runAgentLoop(config, messages, [
+    fakeTool("a", slow("a")),
+    fakeTool("b", slow("b")),
+    fakeTool("c", slow("c")),
+  ]);
+
+  const toolMessages = messages.filter((m) => m.role === "tool");
+  expect(toolMessages.map((m) => m.tool_call_id)).toEqual(["call-a", "call-b", "call-c"]);
+  expect(toolMessages.map((m) => m.content)).toEqual(["a output", "b output", "c output"]);
+});
+
+test("identical calls in one batch run the handler once and reuse the result", async () => {
+  const handler = vi.fn(async () => "shared output");
+  scriptFetch([
+    {
+      tool_calls: [
+        toolCall("dup", { path: "/same" }, "call-1"),
+        toolCall("dup", { path: "/same" }, "call-2"),
+      ],
+    },
+    { content: "done" },
+  ]);
+
+  const messages: Message[] = [{ role: "user", content: "go" }];
+  await runAgentLoop(config, messages, [fakeTool("dup", handler)]);
+
+  expect(handler).toHaveBeenCalledTimes(1);
+  const toolMessages = messages.filter((m) => m.role === "tool");
+  expect(toolMessages[0].content).toBe("shared output");
+  expect(toolMessages[1].content).toContain("already retrieved");
 });

@@ -43,11 +43,32 @@ const LINE_CELL_RE = /^(?:lines?\s+)?(\d+)(?:\s*[-–]\s*(\d+))?$/i;
 /** A cell holding a path and nothing else, once markdown decoration is stripped. */
 const PATH_CELL_RE = /^\/?(?:[\w.@+~-]+\/)*[\w.@+~-]+\.[A-Za-z][\w]*$/;
 
+/**
+ * The answer's own citation block.
+ *
+ * Everything else in this file reverse-engineers where a model put its locations, across four
+ * shapes, because we never asked for one. Asking for a block makes the common case exact instead of
+ * inferred, and the heuristics stay as the fallback for a model that ignores the instruction.
+ *
+ * `<final_answer>` is accepted as the same thing: it is what models trained against the FastContext
+ * exploration harness emit, and one alternation here is the entire cost of running one of them.
+ */
+const CITATION_BLOCK_RE = /<(citations|final_answer)>([\s\S]*?)<\/\1>/i;
+
+/** `src/app.ts:12`, `src/app.ts:12-40`, either optionally followed by a note. One per line. */
+const BLOCK_ENTRY_RE = /^\s*[-*]?\s*`?(\S+?)`?:(\d+)(?:\s*[-–]\s*(\d+))?`?\s*(.*)$/;
+
 export interface Citation {
   path: string;
   line: number;
   /** Present for a range citation; the last line claimed. */
   endLine?: number;
+  /**
+   * The few words a `<citations>` block entry puts after the location — "parallel tool dispatch".
+   * The prompt asks for it, and it is the one place an answer states outright which name belongs to
+   * which line, which is what the symbol/line check pairs on.
+   */
+  note?: string;
 }
 
 export interface CitationCheck {
@@ -57,6 +78,15 @@ export interface CitationCheck {
   /** Canonical path this citation resolved to, when it resolved to exactly one file. */
   resolvedPath?: string;
 }
+
+export interface CitationReport {
+  checks: CitationCheck[];
+  /** Distinct locations the answer named, before the MAX_CITATIONS cap. */
+  named: number;
+}
+
+/** Bounds the work on a pathological answer. Resolution is cached, so this is generous. */
+const MAX_CITATIONS = 200;
 
 function citationLabel(c: Citation): string {
   return c.endLine ? `${c.path}:${c.line}-${c.endLine}` : `${c.path}:${c.line}`;
@@ -105,7 +135,77 @@ function matchCitations(text: string, re: RegExp): Citation[] {
  * always a real citation pasted from tool output; a bare path near a number is not, so the looser
  * two forms stay outside.
  */
+/**
+ * Citations the answer stated outright, or null when it wrote no block. Entries that are not
+ * `path:line` shaped are skipped rather than guessed at — a block with prose in it should degrade
+ * to "these lines parsed", not to a manufactured citation.
+ */
+export function readCitationBlock(text: string): Citation[] | null {
+  const block = CITATION_BLOCK_RE.exec(text);
+  if (!block) return null;
+
+  const found: Citation[] = [];
+  for (const line of block[2].split("\n")) {
+    const m = BLOCK_ENTRY_RE.exec(line);
+    if (!m) continue;
+    const note = m[4]?.trim();
+    found.push({
+      path: m[1],
+      line: Number(m[2]),
+      ...(m[3] ? { endLine: Number(m[3]) } : {}),
+      ...(note ? { note } : {}),
+    });
+  }
+  return found;
+}
+
+/**
+ * Replace the block with the same citations as ordinary markdown, so the caller reads an answer
+ * rather than a tagged one. Returns the text unchanged when there is no block.
+ */
+export function renderCitationBlock(text: string): string {
+  const block = CITATION_BLOCK_RE.exec(text);
+  if (!block) return text;
+
+  const rows: string[] = [];
+  for (const line of block[2].split("\n")) {
+    const m = BLOCK_ENTRY_RE.exec(line);
+    if (!m) continue;
+    const range = m[3] ? `${m[2]}-${m[3]}` : m[2];
+    const note = m[4]?.trim();
+    rows.push(`- \`${m[1]}:${range}\`${note ? ` — ${note}` : ""}`);
+  }
+
+  const rendered = rows.length > 0 ? `**Citations**\n\n${rows.join("\n")}` : "";
+  return `${text.slice(0, block.index)}${rendered}${text.slice(block.index + block[0].length)}`.trim();
+}
+
+/**
+ * Every location the answer names.
+ *
+ * A `<citations>` block used to win outright, on the reasoning that the block is the answer telling
+ * us where it looked and scanning the prose as well would re-add the guessing the block exists to
+ * remove. That was half right, and the half it got wrong is issue #17: an answer carrying more than
+ * a hundred `path:line` references and a five-line block got a footer reading "5 citations checked",
+ * which the caller reads as the whole answer having been checked.
+ *
+ * So the block is unioned with the *inline* form, which is exactly as exact as a block entry and no
+ * more inferred. The two loose forms — table rows and prose ranges — stay block-absent-only; those
+ * are the guessing, and the block really does replace them.
+ */
+/**
+ * The inline `path:line` and `path:start-end` forms, and only those. Exported for the placement
+ * check, which pairs one line of an answer with the one location on it — the block grammar and this
+ * one both stay single-sourced here rather than being re-derived next door.
+ */
+export function inlineCitations(text: string): Citation[] {
+  return matchCitations(text, CITATION_RE);
+}
+
 export function extractCitations(text: string): Citation[] {
+  const stated = readCitationBlock(text);
+  if (stated) return dedupe([...stated, ...matchCitations(text, CITATION_RE)]);
+
   const prose = stripFences(text);
 
   const all = [
@@ -114,9 +214,13 @@ export function extractCitations(text: string): Citation[] {
     ...matchCitations(prose, PROSE_RANGE_RE),
   ];
 
+  return dedupe(all);
+}
+
+function dedupe(citations: Citation[]): Citation[] {
   const seen = new Set<string>();
   const unique: Citation[] = [];
-  for (const c of all) {
+  for (const c of citations) {
     const key = citationLabel(c);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -148,18 +252,20 @@ async function checkOne(c: Citation, resolver: FileResolver): Promise<CitationCh
 /**
  * @param taskPath the directory the caller asked to be mapped, tried before the roots when a
  * relative citation is resolved.
+ * @param resolver shared with the other checks so each cited file is read once, not three times.
  */
 export async function verifyCitations(
   text: string,
   roots: string[],
-  taskPath?: string
-): Promise<CitationCheck[]> {
-  const resolver = new FileResolver(roots, taskPath);
+  taskPath?: string,
+  resolver: FileResolver = new FileResolver(roots, taskPath)
+): Promise<CitationReport> {
+  const named = extractCitations(text);
   const checks: CitationCheck[] = [];
-  for (const citation of extractCitations(text)) {
+  for (const citation of named.slice(0, MAX_CITATIONS)) {
     checks.push(await checkOne(citation, resolver));
   }
-  return checks;
+  return { checks, named: named.length };
 }
 
 /**
@@ -171,13 +277,17 @@ export async function verifyCitations(
  * false for an answer whose citations were all in table cells. Failures are grouped by kind for
  * the same reason: an invented file and a number two lines past the end are not the same problem.
  */
-export function formatCitationReport(checks: CitationCheck[]): string {
+export function formatCitationReport(report: CitationReport): string {
+  const { checks, named } = report;
   if (checks.length === 0) {
     return "_Citations: **none parsed** — no path:line, path:start-end, prose line reference, or File/Line table row was found, so nothing in this answer was checked against the filesystem._";
   }
 
   const bad = checks.filter((c) => !c.ok);
-  const label = `${checks.length} citation${checks.length === 1 ? "" : "s"} checked`;
+  const label =
+    named > checks.length
+      ? `${checks.length} of ${named} citations checked`
+      : `${checks.length} citation${checks.length === 1 ? "" : "s"} checked`;
 
   if (bad.length === 0) {
     return `_Citations: ${label}, all resolve to a real file and line._`;

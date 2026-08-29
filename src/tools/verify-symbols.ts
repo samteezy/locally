@@ -1,6 +1,14 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { hasRipgrep, rgIgnoreArgs, grepIgnoreArgs, IGNORED_DIRS } from "./explore-files.js";
+import { readFile, stat } from "node:fs/promises";
+import {
+  hasRipgrep,
+  rgIgnoreArgs,
+  grepIgnoreArgs,
+  listAllFiles,
+  IGNORED_DIRS,
+  UNFILTERED_RG_ARGS,
+} from "./explore-files.js";
 import { codeSpans, stripFences } from "./answer-text.js";
 
 /**
@@ -34,11 +42,30 @@ const INTERNAL_CASE_CHANGE_RE = /[a-z][A-Z]/;
 /** Below this, a name is too generic for absence to mean anything ("id", "ok"). */
 const MIN_SYMBOL_LENGTH = 4;
 /** Bounds the argument list and the work; an answer naming more than this is not the common case. */
-const MAX_SYMBOLS = 60;
+const MAX_SYMBOLS = 100;
+
+/**
+ * Budget for the Node backstop below. It only runs when a name is about to be called invented, so
+ * in the ordinary run it costs nothing; these bound the pathological case.
+ *
+ * The per-file cap is the one filter this check tolerates. A name that occurs only inside a 4 MB
+ * file is not a name an answer is describing, and refusing to conclude anything in every repository
+ * that contains one lockfile would silence the check everywhere.
+ */
+const BACKSTOP_MAX_FILES = 20_000;
+const BACKSTOP_MAX_BYTES = 128 * 1024 * 1024;
+const BACKSTOP_MAX_FILE_BYTES = 4 * 1024 * 1024;
 
 export interface SymbolCheck {
   symbol: string;
   found: boolean;
+}
+
+export interface SymbolReport {
+  /** One per name actually decided. A name the checks could not settle is absent, not guessed at. */
+  checks: SymbolCheck[];
+  /** Distinct candidate names the answer held, before the MAX_SYMBOLS cap. */
+  named: number;
 }
 
 /**
@@ -48,7 +75,7 @@ export interface SymbolCheck {
  * ordinary prose and generic names like `path` or `query`, which match in every tree and so
  * prove nothing when they do.
  */
-function isCandidate(token: string): boolean {
+export function isCandidate(token: string): boolean {
   if (token.length < MIN_SYMBOL_LENGTH) return false;
   if (!IDENTIFIER_RE.test(token)) return false;
   return token.includes("_") || INTERNAL_CASE_CHANGE_RE.test(token);
@@ -145,16 +172,22 @@ async function findPresent(symbols: string[], roots: string[]): Promise<Set<stri
 }
 
 /**
- * Second opinion on one name, searched alone so no other pattern can shadow it.
+ * Second opinion on one name, searched alone so no other pattern can shadow it — and searched
+ * *unfiltered*, which is the part that matters.
  *
- * Only ever run for names the bulk pass failed to find — the handful about to be reported as
- * fabricated. Paying one subprocess each for those is worth it: the bulk pass is an optimisation,
- * and this is the step that actually has to be right.
+ * The bulk pass runs at ripgrep's defaults, which skip gitignored and hidden files. `buildTree`
+ * hands the model a map built by walking the filesystem, and `Read` opens anything under the roots,
+ * so an answer can correctly describe a file that no default rg search can see. Issue #17 is what
+ * that costs: seven real names, one of them with 122 occurrences, reported as appearing nowhere in
+ * the tree. This step used to re-run the same filtered search, so it confirmed the miss instead of
+ * catching it.
+ *
+ * grep needs no widening — it never applied .gitignore or hidden-file filtering in the first place.
  */
 async function existsAlone(symbol: string, roots: string[], useRg: boolean): Promise<boolean> {
   for (const root of roots) {
     const args = useRg
-      ? ["--fixed-strings", "--ignore-case", "--quiet", ...rgIgnoreArgs(IGNORED_DIRS)]
+      ? ["--fixed-strings", "--ignore-case", "--quiet", ...UNFILTERED_RG_ARGS, ...rgIgnoreArgs(IGNORED_DIRS)]
       : ["-r", "-I", "-F", "-i", "-q", "--no-messages", ...grepIgnoreArgs(IGNORED_DIRS)];
     args.push("--", symbol, root);
     try {
@@ -169,35 +202,129 @@ async function existsAlone(symbol: string, roots: string[], useRg: boolean): Pro
   return false;
 }
 
-export async function verifySymbols(text: string, roots: string[]): Promise<SymbolCheck[]> {
-  const symbols = extractSymbols(text).slice(0, MAX_SYMBOLS);
-  if (symbols.length === 0) return [];
+/**
+ * The backstop: read the tree in-process and look for the names ourselves.
+ *
+ * Reached only by a name that two searches failed to find — the handful about to be reported as
+ * fabricated — so its cost is paid in the case that actually matters and nowhere else. It exists
+ * because issue #17 arrived from a private repository whose exact trigger cannot be replayed: the
+ * gitignore/hidden gap above is a confirmed cause, but a fix that assumes it is the *only* one is a
+ * guess. This depends on no external tool and no flag semantics, so it closes the class.
+ *
+ * `conclusive` is false when the budget ran out before every remaining name was found. A name left
+ * undecided is dropped from the report rather than warned about — the report may be incomplete, but
+ * it must never be wrong.
+ */
+async function scanTree(
+  symbols: string[],
+  roots: string[]
+): Promise<{ present: Set<string>; conclusive: boolean }> {
+  const needles = symbols.map((s) => s.toLowerCase());
+  const present = new Set<string>();
+  let files = 0;
+  let bytes = 0;
+
+  for (const root of roots) {
+    let paths: string[];
+    try {
+      paths = await listAllFiles(root, BACKSTOP_MAX_FILES);
+    } catch {
+      return { present, conclusive: false };
+    }
+    // A full listing may itself have been truncated, and the name could be in what was cut.
+    if (paths.length >= BACKSTOP_MAX_FILES) return { present, conclusive: false };
+
+    for (const path of paths) {
+      if (present.size === needles.length) return { present, conclusive: true };
+      if (files >= BACKSTOP_MAX_FILES || bytes >= BACKSTOP_MAX_BYTES) {
+        return { present, conclusive: false };
+      }
+      let text: string;
+      try {
+        const info = await stat(path);
+        if (info.size > BACKSTOP_MAX_FILE_BYTES) continue;
+        text = (await readFile(path, "utf-8")).toLowerCase();
+      } catch {
+        continue; // unreadable or not valid UTF-8; neither is evidence of absence
+      }
+      files += 1;
+      bytes += text.length;
+      for (const needle of needles) {
+        if (!present.has(needle) && text.includes(needle)) present.add(needle);
+      }
+    }
+  }
+
+  return { present, conclusive: true };
+}
+
+/**
+ * Three passes, each strictly wider than the last, and a name only reaches the footer once all
+ * three have failed to find it. Every pass but the first runs on the leftovers of the one before,
+ * so the ordinary answer — where every name is real — costs exactly one search.
+ */
+export async function verifySymbols(text: string, roots: string[]): Promise<SymbolReport> {
+  const named = extractSymbols(text);
+  const symbols = named.slice(0, MAX_SYMBOLS);
+  if (symbols.length === 0) return { checks: [], named: named.length };
 
   const present = await findPresent(symbols, roots);
-  if (present === null) return [];
+  if (present === null) return { checks: [], named: named.length };
 
   const useRg = await hasRipgrep();
+  // symbol -> found, or absent for "no pass could settle it". Filled in over three rounds and read
+  // back in the answer's own order, so the report lists names as the reader met them.
+  const verdicts = new Map<string, boolean>();
+  const unresolved: string[] = [];
+
+  for (const symbol of symbols) {
+    // A hit in the bulk pass is conclusive; a miss is not — it ran filtered, and it shadows a
+    // longer name behind a shorter one it prefixes — so re-check it alone and unfiltered.
+    if (present.has(symbol.toLowerCase()) || (await existsAlone(symbol, roots, useRg))) {
+      verdicts.set(symbol, true);
+    } else {
+      unresolved.push(symbol);
+    }
+  }
+
+  if (unresolved.length > 0) {
+    const { present: seen, conclusive } = await scanTree(unresolved, roots);
+    for (const symbol of unresolved) {
+      if (seen.has(symbol.toLowerCase())) verdicts.set(symbol, true);
+      // Undecided, not absent: say nothing about it at all rather than count it either way.
+      else if (conclusive) verdicts.set(symbol, false);
+    }
+  }
+
   const checks: SymbolCheck[] = [];
   for (const symbol of symbols) {
-    // A hit in the bulk pass is conclusive; a miss is not, so re-check it on its own.
-    const found = present.has(symbol.toLowerCase()) || (await existsAlone(symbol, roots, useRg));
-    checks.push({ symbol, found });
+    const found = verdicts.get(symbol);
+    if (found !== undefined) checks.push({ symbol, found });
   }
-  return checks;
+
+  return { checks, named: named.length };
 }
 
 /**
  * One line for the caller, and only when there is something to say. A clean run stays silent:
  * the answer already carries a Citations: line, and a second all-clear on every response is the
  * kind of noise that gets both of them skipped.
+ *
+ * The line states its own coverage and its own matcher. Issue #17 read a footer saying
+ * "60 names checked" and took it for a count; 60 is the cap, and the answer had named more. A
+ * checker that will not say what it looked at cannot be argued with when it is wrong.
  */
-export function formatSymbolReport(checks: SymbolCheck[]): string {
+export function formatSymbolReport(report: SymbolReport): string {
+  const { checks, named } = report;
   const missing = checks.filter((c) => !c.found);
   if (missing.length === 0) return "";
 
-  const label = `${checks.length} name${checks.length === 1 ? "" : "s"} checked`;
+  const capped = named > checks.length;
+  const label = capped
+    ? `${checks.length} of ${named} names checked`
+    : `${checks.length} name${checks.length === 1 ? "" : "s"} checked`;
   const verb = missing.length === 1 ? "does" : "do";
   const names = missing.map((c) => `\`${c.symbol}\``).join(", ");
 
-  return `_Symbols: ${label}, **${missing.length} ${verb} not appear anywhere in the tree** — ${names}. Treat the claims naming them as unverified._`;
+  return `_Symbols: ${label} — substring, case-insensitive, across every file under the allowed roots — **${missing.length} ${verb} not appear anywhere in the tree**: ${names}. Treat the claims naming them as unverified._`;
 }

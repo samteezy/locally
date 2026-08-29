@@ -1,15 +1,37 @@
-import { runCompletionWithTools, type Message, type ToolDefinition } from "./client.js";
+import { runCompletionWithTools, type Message, type ToolCall, type ToolDefinition } from "./client.js";
 import { LocallyError } from "./errors.js";
-import { exploreFiles, EXPLORE_FILES_SCHEMA } from "../tools/explore-files.js";
+import { grepFiles, globFiles, GREP_SCHEMA, GLOB_SCHEMA } from "../tools/explore-files.js";
 import { readFile, READ_FILE_SCHEMA } from "../tools/read-file.js";
 import { writeFile, WRITE_FILE_SCHEMA } from "../tools/write-file.js";
 import { patchFile, PATCH_FILE_SCHEMA } from "../tools/patch-file.js";
 import { runShell, RUN_SHELL_SCHEMA } from "../tools/run-shell.js";
 import type { ResolvedAgentConfig } from "../config.js";
 
+/**
+ * How a tool touches the filesystem — declared, not inferred from its name.
+ *
+ * runAgenticTask used to wrap tools in a `switch` over their names to apply the allowedRoots fence
+ * and record what the run had seen, with a `default:` that returned the tool unwrapped. Renaming a
+ * tool would therefore have silently dropped it out of the sandbox *and* out of the coverage note,
+ * with no error anywhere. Declaring the contract on the tool makes that a type error instead.
+ */
+export interface ToolFence {
+  /** The argument key holding the path this tool touches. Validated against allowedRoots. */
+  pathKey: string;
+  /** Whether the path must already exist (reads and searches) or may be created (writes). */
+  mustExist: boolean;
+  /** Fill in the task's own directory when the model omits the path, rather than erroring. */
+  defaultsToTaskRoot?: boolean;
+  /** What a successful call proves about the files it touched, for explore_task's coverage note. */
+  evidence?: "read" | "searchHits" | "listing";
+  /** Whether the config's `ignorePatterns` are merged into this tool's `ignore_patterns` argument. */
+  mergesIgnorePatterns?: boolean;
+}
+
 export interface AgentTool {
   definition: ToolDefinition;
   handler: (args: unknown) => Promise<string>;
+  fence: ToolFence;
 }
 
 export interface AgentRunResult {
@@ -52,30 +74,50 @@ export interface AgentRunResult {
   nudged: boolean;
 }
 
+/**
+ * Three sharp tools rather than one with a mode switch: Read opens a file, Grep searches contents,
+ * Glob finds files by name. The names are the ones every other coding agent uses, which is what
+ * every model has seen most of in training — a model guessing at this surface should guess right.
+ */
 export const AGENT_TOOLS: AgentTool[] = [
   {
     definition: {
       type: "function",
       function: {
-        name: "explore_files",
+        name: "Grep",
         description:
-          "Search file contents with ripgrep (or grep) and get back matching lines as path:line:text. This is your primary tool — prefer several narrow searches over one broad sweep. Omit query to list what files exist in a directory (paths, line counts, sizes) without reading them.",
-        parameters: EXPLORE_FILES_SCHEMA,
+          "Search file contents with ripgrep (or grep) and get back matching lines as path:line:text. This is your primary tool — prefer several narrow searches over one broad sweep.",
+        parameters: GREP_SCHEMA,
       },
     },
-    handler: (args) => exploreFiles(args as Parameters<typeof exploreFiles>[0]),
+    handler: (args) => grepFiles(args as Parameters<typeof grepFiles>[0]),
+    fence: { pathKey: "path", mustExist: true, defaultsToTaskRoot: true, evidence: "searchHits", mergesIgnorePatterns: true },
   },
   {
     definition: {
       type: "function",
       function: {
-        name: "read_file",
+        name: "Glob",
+        description:
+          "Find files by name pattern (e.g. \"*.ts\", \"src/**/*.tsx\") and get back their paths, line counts and sizes. Use this to see what exists before deciding what to open — never to guess a filename from a convention.",
+        parameters: GLOB_SCHEMA,
+      },
+    },
+    handler: (args) => globFiles(args as Parameters<typeof globFiles>[0]),
+    fence: { pathKey: "path", mustExist: true, defaultsToTaskRoot: true, evidence: "listing", mergesIgnorePatterns: true },
+  },
+  {
+    definition: {
+      type: "function",
+      function: {
+        name: "Read",
         description:
           "Read a file by absolute path. Output is line-numbered, so cite the numbers you see rather than counting. Pass offset and limit to read just the range you need.",
         parameters: READ_FILE_SCHEMA,
       },
     },
     handler: (args) => readFile(args as Parameters<typeof readFile>[0]),
+    fence: { pathKey: "path", mustExist: true, evidence: "read" },
   },
 ];
 
@@ -92,6 +134,7 @@ export const RUN_AGENT_TOOLS: AgentTool[] = [
       },
     },
     handler: (args) => writeFile(args as Parameters<typeof writeFile>[0]),
+    fence: { pathKey: "path", mustExist: false },
   },
   {
     definition: {
@@ -104,6 +147,7 @@ export const RUN_AGENT_TOOLS: AgentTool[] = [
       },
     },
     handler: (args) => patchFile(args as Parameters<typeof patchFile>[0]),
+    fence: { pathKey: "path", mustExist: false },
   },
   {
     definition: {
@@ -116,6 +160,7 @@ export const RUN_AGENT_TOOLS: AgentTool[] = [
       },
     },
     handler: (args) => runShell(args as Parameters<typeof runShell>[0]),
+    fence: { pathKey: "cwd", mustExist: true, defaultsToTaskRoot: true },
   },
 ];
 
@@ -155,6 +200,63 @@ export async function runAgentLoop(
   // Capped at MAX_CACHE_SIZE entries; evicts oldest when full.
   const MAX_CACHE_SIZE = 50;
   const toolResultCache = new Map<string, string>();
+
+  /**
+   * Run one tool call and return the text that goes back to the model.
+   *
+   * In-flight calls are tracked alongside finished ones so that two identical calls in the same
+   * parallel batch collapse to a single execution rather than racing to fill the cache.
+   */
+  const inFlight = new Map<string, Promise<string>>();
+
+  const dispatch = async (toolCall: ToolCall): Promise<string> => {
+    const { name, arguments: argsJson } = toolCall.function;
+    try {
+      // Parsed once — used for cache key normalization and handler invocation.
+      let parsedArgs: unknown;
+      try {
+        parsedArgs = JSON.parse(argsJson);
+      } catch {
+        throw new Error(`Invalid JSON in tool arguments: ${argsJson}`);
+      }
+      const cacheKey = `${name}:${JSON.stringify(parsedArgs)}`;
+
+      const cached = toolResultCache.get(cacheKey);
+      if (cached !== undefined) {
+        // Still reported: from the caller's side a cache hit is activity, and a run that is
+        // looping on one repeated call is exactly what a heartbeat should reveal.
+        onProgress?.(`[tool: ${name}] ${argsJson} (cached)`);
+        return `(already retrieved — returning cached result)\n${cached}`;
+      }
+
+      const pending = inFlight.get(cacheKey);
+      if (pending) {
+        onProgress?.(`[tool: ${name}] ${argsJson} (cached)`);
+        return `(already retrieved — returning cached result)\n${await pending}`;
+      }
+
+      onProgress?.(`[tool: ${name}] ${argsJson}`);
+      const handler = toolMap.get(name);
+      if (!handler) return `Error: unknown tool "${name}"`;
+
+      const run = handler(parsedArgs);
+      inFlight.set(cacheKey, run);
+      let result: string;
+      try {
+        result = await run;
+      } finally {
+        inFlight.delete(cacheKey);
+      }
+
+      if (toolResultCache.size >= MAX_CACHE_SIZE) {
+        toolResultCache.delete(toolResultCache.keys().next().value!);
+      }
+      toolResultCache.set(cacheKey, result);
+      return result;
+    } catch (err) {
+      return `Error: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  };
 
   let iterations = 0;
 
@@ -235,46 +337,17 @@ export async function runAgentLoop(
       };
     }
 
-    for (const toolCall of turn.tool_calls) {
-      const { name, arguments: argsJson } = toolCall.function;
-      let result = "";
+    // A turn's tool calls are independent by construction — the model asked for all of them
+    // before seeing any result — so they run concurrently. Serially awaiting three or four
+    // searches multiplied the wall clock of every iteration for nothing. Results are still
+    // pushed in call order: the API requires each role:"tool" message to follow its call.
+    const results = await Promise.all(turn.tool_calls.map((toolCall) => dispatch(toolCall)));
 
-      try {
-        // Parse once — used for cache key normalization and handler invocation
-        let parsedArgs: unknown;
-        try {
-          parsedArgs = JSON.parse(argsJson);
-        } catch {
-          throw new Error(`Invalid JSON in tool arguments: ${argsJson}`);
-        }
-        const cacheKey = `${name}:${JSON.stringify(parsedArgs)}`;
-
-        if (toolResultCache.has(cacheKey)) {
-          // Still reported: from the caller's side a cache hit is activity, and a run that
-          // is looping on one repeated call is exactly what a heartbeat should reveal.
-          onProgress?.(`[tool: ${name}] ${argsJson} (cached)`);
-          result = `(already retrieved — returning cached result)\n${toolResultCache.get(cacheKey)!}`;
-        } else {
-          onProgress?.(`[tool: ${name}] ${argsJson}`);
-          const handler = toolMap.get(name);
-          if (!handler) {
-            result = `Error: unknown tool "${name}"`;
-          } else {
-            result = await handler(parsedArgs);
-          }
-          if (toolResultCache.size >= MAX_CACHE_SIZE) {
-            toolResultCache.delete(toolResultCache.keys().next().value!);
-          }
-          toolResultCache.set(cacheKey, result);
-        }
-      } catch (err) {
-        result = `Error: ${err instanceof Error ? err.message : String(err)}`;
-      }
-
+    for (let i = 0; i < turn.tool_calls.length; i++) {
       messages.push({
         role: "tool",
-        tool_call_id: toolCall.id,
-        content: result,
+        tool_call_id: turn.tool_calls[i].id,
+        content: results[i],
       });
     }
   }

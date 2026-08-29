@@ -66,51 +66,95 @@ test("deduplicates repeats", () => {
 // with a plausible description. It never opened the directory.
 
 test("flags a file that exists nowhere in the tree", async () => {
-  const checks = await verifyPaths("The schema is `schemas/document.ts`.", roots);
+  const { checks } = await verifyPaths("The schema is `schemas/document.ts`.", roots);
   expect(checks).toEqual([{ path: "schemas/document.ts", exists: false }]);
 });
 
 test("passes a file that exists, cited short", async () => {
-  const checks = await verifyPaths("The schema is `corpus.ts`.", roots);
+  const { checks } = await verifyPaths("The schema is `corpus.ts`.", roots);
   expect(checks).toHaveLength(1);
   expect(checks[0]).toMatchObject({ path: "corpus.ts", exists: true });
 });
 
 test("resolves against the mapped task path", async () => {
-  const checks = await verifyPaths("See `chunkSet.ts`.", roots, join(base, "schemas"));
+  const { checks } = await verifyPaths("See `chunkSet.ts`.", roots, join(base, "schemas"));
   expect(checks[0].exists).toBe(true);
 });
 
 test("skips paths another check already reported", async () => {
   const text = "`schemas/document.ts` and `schemas/ghost.ts`";
-  const checks = await verifyPaths(text, roots, undefined, new Set(["schemas/document.ts"]));
+  const { checks } = await verifyPaths(text, roots, undefined, new Set(["schemas/document.ts"]));
   expect(checks).toEqual([{ path: "schemas/ghost.ts", exists: false }]);
 });
 
 test("nothing to check returns nothing", async () => {
-  expect(await verifyPaths("No paths here at all.", roots)).toEqual([]);
+  expect(await verifyPaths("No paths here at all.", roots)).toEqual({ checks: [], named: 0 });
+});
+
+// --- the filtered-search gap (issue #17) --------------------------------------
+// A bare basename is resolved by findFilesNamed, which asks ripgrep first. rg skips gitignored and
+// hidden files that the directory map lists and `Read` can open, so an empty rg result is a
+// filtered answer, not an absence — and this check reports absence as invention.
+
+let filtered: string;
+let filteredRoots: string[];
+
+beforeAll(() => {
+  filtered = realpathSync(mkdtempSync(join(tmpdir(), "locally-paths-filtered-")));
+  mkdirSync(join(filtered, ".git"), { recursive: true }); // enough for rg to honour .gitignore
+  mkdirSync(join(filtered, "generated"), { recursive: true });
+  mkdirSync(join(filtered, ".config"), { recursive: true });
+  writeFileSync(join(filtered, ".gitignore"), "generated/\n");
+  writeFileSync(join(filtered, "generated", "schema.ts"), "export const alpha = 1;\n");
+  writeFileSync(join(filtered, ".config", "wiring.ts"), "export const beta = 1;\n");
+  filteredRoots = resolveRoots([filtered]);
+});
+
+afterAll(() => rmSync(filtered, { recursive: true, force: true }));
+
+test("a gitignored file cited by basename is not called invented", async () => {
+  const { checks } = await verifyPaths("The tables live in `schema.ts`.", filteredRoots);
+  expect(checks).toEqual([{ path: "schema.ts", exists: true, resolvedPath: join(filtered, "generated", "schema.ts") }]);
+});
+
+test("a file under a dot-directory cited by basename is not called invented", async () => {
+  const { checks } = await verifyPaths("Wired in `wiring.ts`.", filteredRoots);
+  expect(checks[0]).toMatchObject({ path: "wiring.ts", exists: true });
+});
+
+test("a basename that really is nowhere is still reported", async () => {
+  const { checks } = await verifyPaths("See `ghost.ts`.", filteredRoots);
+  expect(checks).toEqual([{ path: "ghost.ts", exists: false }]);
 });
 
 // --- report -------------------------------------------------------------------
 
 test("a clean run says nothing", () => {
-  expect(formatPathReport([{ path: "corpus.ts", exists: true }])).toBe("");
-  expect(formatPathReport([])).toBe("");
+  expect(formatPathReport({ checks: [{ path: "corpus.ts", exists: true }], named: 1 })).toBe("");
+  expect(formatPathReport({ checks: [], named: 0 })).toBe("");
 });
 
 test("names every missing file", () => {
-  const out = formatPathReport([
-    { path: "corpus.ts", exists: true },
-    { path: "chunk.ts", exists: false },
-    { path: "document.ts", exists: false },
-  ]);
+  const out = formatPathReport({
+    checks: [
+      { path: "corpus.ts", exists: true },
+      { path: "chunk.ts", exists: false },
+      { path: "document.ts", exists: false },
+    ],
+    named: 3,
+  });
   expect(out).toContain("3 file paths checked");
   expect(out).toContain("**2 do not exist anywhere in the tree**");
   expect(out).toContain("`chunk.ts`, `document.ts`");
   expect(out).toContain("Treat the claims describing them as invented");
 });
 
+test("says so when the cap truncated the list", () => {
+  const out = formatPathReport({ checks: [{ path: "chunk.ts", exists: false }], named: 120 });
+  expect(out).toContain("1 of 120 file paths checked");
+});
+
 test("uses the singular for one missing file", () => {
-  const out = formatPathReport([{ path: "chunk.ts", exists: false }]);
+  const out = formatPathReport({ checks: [{ path: "chunk.ts", exists: false }], named: 1 });
   expect(out).toContain("**1 does not exist anywhere in the tree**");
 });

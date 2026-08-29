@@ -2,7 +2,7 @@ import { test, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { verifyCitations, formatCitationReport, extractCitations } from "./verify-citations.js";
+import { verifyCitations, formatCitationReport, extractCitations, renderCitationBlock } from "./verify-citations.js";
 import { resolveRoots } from "./sandbox.js";
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), "locally-cite-")));
@@ -14,38 +14,38 @@ writeFileSync(join(base, "features", "chunks", "ChunkSetPage.tsx"), "x\n".repeat
 const roots = resolveRoots([base]);
 
 test("accepts a citation whose line is in range", async () => {
-  const checks = await verifyCitations("See src/app.ts:12 for the handler.", roots);
+  const { checks } = await verifyCitations("See src/app.ts:12 for the handler.", roots);
   expect(checks[0]).toMatchObject({ citation: "src/app.ts:12", ok: true });
 });
 
 test("flags a line past the end of the file", async () => {
-  const checks = await verifyCitations("Defined at src/app.ts:900.", roots);
+  const { checks } = await verifyCitations("Defined at src/app.ts:900.", roots);
   expect(checks[0].ok).toBe(false);
   expect(checks[0].reason).toBe("file has 40 lines");
 });
 
 test("flags a file that does not exist", async () => {
-  const checks = await verifyCitations("Look in src/imaginary.ts:3.", roots);
+  const { checks } = await verifyCitations("Look in src/imaginary.ts:3.", roots);
   expect(checks[0]).toEqual({ citation: "src/imaginary.ts:3", ok: false, reason: "file not found" });
 });
 
 test("rejects a citation that escapes the roots", async () => {
-  const checks = await verifyCitations("See ../../etc/passwd.txt:1", roots);
+  const { checks } = await verifyCitations("See ../../etc/passwd.txt:1", roots);
   expect(checks[0].ok).toBe(false);
 });
 
 test("resolves absolute citations", async () => {
-  const checks = await verifyCitations(`At ${join(base, "src", "app.ts")}:40.`, roots);
+  const { checks } = await verifyCitations(`At ${join(base, "src", "app.ts")}:40.`, roots);
   expect(checks[0].ok).toBe(true);
 });
 
 test("deduplicates repeated citations", async () => {
-  const checks = await verifyCitations("src/app.ts:12 and again src/app.ts:12", roots);
+  const { checks } = await verifyCitations("src/app.ts:12 and again src/app.ts:12", roots);
   expect(checks).toHaveLength(1);
 });
 
 test("ignores URLs and version-like text", async () => {
-  const checks = await verifyCitations("See https://example.com:8080/x and v1.2:3", roots);
+  const { checks } = await verifyCitations("See https://example.com:8080/x and v1.2:3", roots);
   expect(checks).toHaveLength(0);
 });
 
@@ -53,33 +53,47 @@ test("an answer that cited nothing is called out, not passed over in silence", (
   // Silence here used to be indistinguishable from a well-cited answer (issue #13). The wording
   // reports on the checker, not the answer: an answer whose citations were all in table cells was
   // told it named no location at all, which was false (issue #16).
-  const report = formatCitationReport([]);
+  const report = formatCitationReport({ checks: [], named: 0 });
   expect(report).toContain("none parsed");
   expect(report).toContain("nothing in this answer was checked");
   expect(report).not.toContain("names no path:line");
 });
 
 test("report confirms a clean set", () => {
-  expect(formatCitationReport([{ citation: "a.ts:1", ok: true }])).toContain("all resolve");
+  expect(formatCitationReport({ checks: [{ citation: "a.ts:1", ok: true }], named: 1 })).toContain("all resolve");
 });
 
 test("report names each failure and warns the caller", () => {
-  const out = formatCitationReport([
-    { citation: "a.ts:1", ok: true },
-    { citation: "b.ts:900", ok: false, reason: "file has 40 lines" },
-  ]);
+  const out = formatCitationReport({
+    checks: [
+      { citation: "a.ts:1", ok: true },
+      { citation: "b.ts:900", ok: false, reason: "file has 40 lines" },
+    ],
+    named: 2,
+  });
   expect(out).toContain("2 citations checked");
   expect(out).toContain("points past the end of its file");
   expect(out).toContain("b.ts:900 (file has 40 lines)");
   expect(out).toContain("unverified");
 });
 
+test("report says so when the cap truncated the list", () => {
+  const out = formatCitationReport({
+    checks: [{ citation: "b.ts:900", ok: false, reason: "file has 40 lines" }],
+    named: 240,
+  });
+  expect(out).toContain("1 of 240 citations checked");
+});
+
 test("report separates an invented file from a number past the end", () => {
   // Two different problems for the caller, and until issue #16 they were one undifferentiated count.
-  const out = formatCitationReport([
-    { citation: "ghost.ts:1", ok: false, reason: "file not found" },
-    { citation: "b.ts:900", ok: false, reason: "file has 40 lines" },
-  ]);
+  const out = formatCitationReport({
+    checks: [
+      { citation: "ghost.ts:1", ok: false, reason: "file not found" },
+      { citation: "b.ts:900", ok: false, reason: "file has 40 lines" },
+    ],
+    named: 2,
+  });
   expect(out).toContain("1 names a file that does not exist");
   expect(out).toContain("ghost.ts:1");
   expect(out).toContain("1 points past the end of its file");
@@ -91,23 +105,23 @@ test("report separates an invented file from a number past the end", () => {
 // citations in one eval run and buried the ones that were genuinely wrong.
 
 test("resolves a bare filename that matches one file in the tree", async () => {
-  const checks = await verifyCitations("See app.ts:3 for the handler.", roots);
+  const { checks } = await verifyCitations("See app.ts:3 for the handler.", roots);
   expect(checks).toHaveLength(1);
   expect(checks[0]).toMatchObject({ citation: "app.ts:3", ok: true });
 });
 
 test("resolves a partial path that matches one file in the tree", async () => {
-  const checks = await verifyCitations("See src/app.ts:3.", roots);
+  const { checks } = await verifyCitations("See src/app.ts:3.", roots);
   expect(checks[0].ok).toBe(true);
 });
 
 test("still flags a bare filename that matches nothing", async () => {
-  const checks = await verifyCitations("See nowhere.ts:3.", roots);
+  const { checks } = await verifyCitations("See nowhere.ts:3.", roots);
   expect(checks).toEqual([{ citation: "nowhere.ts:3", ok: false, reason: "file not found" }]);
 });
 
 test("flags a line past the end of a file found by short path", async () => {
-  const checks = await verifyCitations("See app.ts:9000.", roots);
+  const { checks } = await verifyCitations("See app.ts:9000.", roots);
   expect(checks[0].ok).toBe(false);
   // One match in the tree, so the report can name its length rather than shrug.
   expect(checks[0].reason).toBe("file has 40 lines");
@@ -115,7 +129,7 @@ test("flags a line past the end of a file found by short path", async () => {
 
 test("does not match a filename on a partial segment", async () => {
   // "pp.ts" must not resolve to "app.ts" — the suffix has to start at a path boundary.
-  const checks = await verifyCitations("See pp.ts:3.", roots);
+  const { checks } = await verifyCitations("See pp.ts:3.", roots);
   expect(checks[0].ok).toBe(false);
 });
 
@@ -124,20 +138,20 @@ test("does not match a filename on a partial segment", async () => {
 // inline-only extractor read none of them — so a heavily-cited answer was reported as citing nothing.
 
 test("reads a path:start-end range", async () => {
-  const checks = await verifyCitations("The handler spans src/app.ts:12-30.", roots);
+  const { checks } = await verifyCitations("The handler spans src/app.ts:12-30.", roots);
   expect(checks).toHaveLength(1);
   expect(checks[0]).toMatchObject({ citation: "src/app.ts:12-30", ok: true });
 });
 
 test("flags a range whose end runs past the file", async () => {
-  const checks = await verifyCitations("src/app.ts:30-450 holds it.", roots);
+  const { checks } = await verifyCitations("src/app.ts:30-450 holds it.", roots);
   expect(checks[0].ok).toBe(false);
   expect(checks[0].reason).toBe("file has 40 lines");
 });
 
 test("reads a markdown table row pairing a file cell with a line cell", async () => {
   const text = ["| File | Line |", "| --- | --- |", "| `src/app.ts` | 12 |"].join("\n");
-  const checks = await verifyCitations(text, roots);
+  const { checks } = await verifyCitations(text, roots);
   expect(checks).toHaveLength(1);
   expect(checks[0]).toMatchObject({ citation: "src/app.ts:12", ok: true });
 });
@@ -182,7 +196,7 @@ test("still reads an inline citation inside a fenced block", () => {
 
 test("deduplicates the same location written in two forms", async () => {
   const text = ["src/app.ts:12 is the handler.", "", "| `src/app.ts` | 12 |"].join("\n");
-  expect(await verifyCitations(text, roots)).toHaveLength(1);
+  expect((await verifyCitations(text, roots)).checks).toHaveLength(1);
 });
 
 // --- resolution base ----------------------------------------------------------
@@ -190,17 +204,88 @@ test("deduplicates the same location written in two forms", async () => {
 // against the repository root alone found nothing, and all 19 correct citations were called missing.
 
 test("resolves a bare basename against the mapped task path first", async () => {
-  const checks = await verifyCitations("See ChunkSetPage.tsx:47.", roots, join(base, "features", "chunks"));
+  const { checks } = await verifyCitations("See ChunkSetPage.tsx:47.", roots, join(base, "features", "chunks"));
   expect(checks[0]).toMatchObject({ citation: "ChunkSetPage.tsx:47", ok: true });
 });
 
 test("resolves a basename from a mapped subdirectory even without the task path", async () => {
   // The targeted by-name search is what makes this work with no index to fall out of.
-  const checks = await verifyCitations("See ChunkSetPage.tsx:47.", roots);
+  const { checks } = await verifyCitations("See ChunkSetPage.tsx:47.", roots);
   expect(checks[0].ok).toBe(true);
 });
 
 test("a task path outside the roots does not smuggle a file in", async () => {
-  const checks = await verifyCitations("See passwd.txt:1.", roots, "/etc");
+  const { checks } = await verifyCitations("See passwd.txt:1.", roots, "/etc");
   expect(checks[0]).toMatchObject({ ok: false, reason: "file not found" });
+});
+
+// --- the answer's own citation block --------------------------------------------
+// Everything above reverse-engineers where a model put its locations. Asking for a block makes the
+// common case exact; the heuristics stay as the fallback for a model that ignores the instruction.
+
+test("reads citations straight out of a <citations> block", () => {
+  const found = extractCitations(
+    [
+      "The loop dispatches in parallel.",
+      "",
+      "<citations>",
+      "src/llm/agent-loop.ts:238-279 parallel dispatch",
+      "src/config.ts:107 agent resolution",
+      "</citations>",
+    ].join("\n")
+  );
+  // The note comes back with the location: it is the one place an answer says outright which name
+  // belongs to which line, and the placement check pairs on it.
+  expect(found).toEqual([
+    { path: "src/llm/agent-loop.ts", line: 238, endLine: 279, note: "parallel dispatch" },
+    { path: "src/config.ts", line: 107, note: "agent resolution" },
+  ]);
+});
+
+test("<final_answer> is the same block under the name FastContext-trained models emit", () => {
+  const found = extractCitations("<final_answer>\n/abs/src/router.py:42-58\n</final_answer>");
+  expect(found).toEqual([{ path: "/abs/src/router.py", line: 42, endLine: 58 }]);
+});
+
+test("a block does not hide the inline citations the answer also made", () => {
+  // Issue #17: an answer carrying 100+ path:line references and a five-line block got a footer
+  // reading "5 citations checked", which a caller reads as the whole answer having been checked.
+  // An inline path:line is as exact as a block entry, so both are checked and both are counted.
+  const found = extractCitations("See src/other.ts:9.\n\n<citations>\nsrc/app.ts:4\n</citations>");
+  expect(found).toEqual([
+    { path: "src/app.ts", line: 4 },
+    { path: "src/other.ts", line: 9 },
+  ]);
+});
+
+test("a block still wins over the loose forms, which are the guessing it replaces", () => {
+  // A table row or a prose range is inferred; the block exists to stop inferring. Only the inline
+  // form joins it.
+  const found = extractCitations(
+    "| File | Line |\n| `src/table.ts` | 12 |\n\n<citations>\nsrc/app.ts:4\n</citations>"
+  );
+  expect(found).toEqual([{ path: "src/app.ts", line: 4 }]);
+});
+
+test("lines in a block that are not path:line shaped are skipped, not guessed at", () => {
+  const found = extractCitations("<citations>\nno idea where this lives\nsrc/app.ts:4\n</citations>");
+  expect(found).toEqual([{ path: "src/app.ts", line: 4 }]);
+});
+
+test("without a block the four prose forms are still read", () => {
+  expect(extractCitations("The handler is at src/app.ts:4.")).toEqual([{ path: "src/app.ts", line: 4 }]);
+});
+
+test("rendering turns the block into markdown and keeps the notes", () => {
+  const rendered = renderCitationBlock(
+    "The loop dispatches in parallel.\n\n<citations>\nsrc/llm/agent-loop.ts:238-279 parallel dispatch\n</citations>"
+  );
+  expect(rendered).toContain("The loop dispatches in parallel.");
+  expect(rendered).toContain("**Citations**");
+  expect(rendered).toContain("- `src/llm/agent-loop.ts:238-279` — parallel dispatch");
+  expect(rendered).not.toContain("<citations>");
+});
+
+test("rendering leaves an answer with no block untouched", () => {
+  expect(renderCitationBlock("Just prose, at src/app.ts:4.")).toBe("Just prose, at src/app.ts:4.");
 });
