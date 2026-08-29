@@ -59,19 +59,19 @@ test("an answer with no citations at all is flagged as unanchored", async () => 
 
 test("counts the distinct files the model actually opened", async () => {
   // Two turns: the model reads one file twice under different spellings, then answers. The
-  // footer figure should be 1 — it is a count of files, not of read_file calls.
+  // footer figure should be 1 — it is a count of files, not of Read calls.
   const turns = [
     {
       tool_calls: [
         {
           id: "c1",
           type: "function",
-          function: { name: "read_file", arguments: JSON.stringify({ path: join(base, "src/app.ts") }) },
+          function: { name: "Read", arguments: JSON.stringify({ path: join(base, "src/app.ts") }) },
         },
         {
           id: "c2",
           type: "function",
-          function: { name: "read_file", arguments: JSON.stringify({ path: join(base, "src/../src/app.ts") }) },
+          function: { name: "Read", arguments: JSON.stringify({ path: join(base, "src/../src/app.ts") }) },
         },
       ],
     },
@@ -266,7 +266,7 @@ test("says nothing when every named file was read", async () => {
           {
             id: "c1",
             type: "function",
-            function: { name: "read_file", arguments: JSON.stringify({ path: join(base, "src/app.ts") }) },
+            function: { name: "Read", arguments: JSON.stringify({ path: join(base, "src/app.ts") }) },
           },
         ],
       },
@@ -278,7 +278,7 @@ test("says nothing when every named file was read", async () => {
 });
 
 test("a file matched in a search counts as looked at", async () => {
-  // The contract accepts a search hit as evidence, so counting only read_file would flag the
+  // The contract accepts a search hit as evidence, so counting only Read would flag the
   // tool's own recommended workflow as unevidenced.
   replay([
     {
@@ -287,8 +287,8 @@ test("a file matched in a search counts as looked at", async () => {
           id: "c1",
           type: "function",
           function: {
-            name: "explore_files",
-            arguments: JSON.stringify({ path: join(base, "src"), query: "line 4" }),
+            name: "Grep",
+            arguments: JSON.stringify({ path: join(base, "src"), pattern: "line 4" }),
           },
         },
       ],
@@ -330,7 +330,7 @@ test("a file named after a directory listing is not called undescribed", async (
         {
           id: "c1",
           type: "function",
-          function: { name: "explore_files", arguments: JSON.stringify({ path: join(base, "src") }) },
+          function: { name: "Glob", arguments: JSON.stringify({ path: join(base, "src") }) },
         },
       ],
     },
@@ -349,7 +349,7 @@ test("a listing does not license a claim about a line's contents", async () => {
         {
           id: "c1",
           type: "function",
-          function: { name: "explore_files", arguments: JSON.stringify({ path: join(base, "src") }) },
+          function: { name: "Glob", arguments: JSON.stringify({ path: join(base, "src") }) },
         },
       ],
     },
@@ -357,4 +357,77 @@ test("a listing does not license a claim about a line's contents", async () => {
   ]);
   const result = await exploreTask(config, { task: "q", path: base });
   expect(result.text).toContain("Described without being looked at: `src/app.ts`");
+});
+
+// --- the iteration budget --------------------------------------------------------
+// Three sources, in order: what the caller asked for on the call, what the agent is configured
+// for, and the breadth default. An agent running a model with a tight turn budget should not be
+// pushed to twenty iterations just because the caller said "very thorough".
+
+test("an agent's own maxIterations overrides the breadth default", async () => {
+  const agentConfig: LocallyConfig = {
+    ...config,
+    agents: { fast: { maxIterations: 2 } },
+    tools: { explore: { agent: "fast" } },
+  };
+  // Never offers a final answer, so the run only stops when the budget runs out. Two loop
+  // iterations plus the forced tool-less final call.
+  const fetchMock = replay([
+    { tool_calls: [{ id: "a", type: "function", function: { name: "Grep", arguments: JSON.stringify({ pattern: "x" }) } }] },
+    { tool_calls: [{ id: "b", type: "function", function: { name: "Grep", arguments: JSON.stringify({ pattern: "y" }) } }] },
+    { content: "Forced." },
+  ]);
+  const result = await exploreTask(agentConfig, { task: "q", path: base, breadth: "very thorough" });
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(result.cappedAtMaxIterations).toBe(true);
+});
+
+test("an explicit max_iterations on the call still beats the agent's", async () => {
+  const agentConfig: LocallyConfig = {
+    ...config,
+    agents: { fast: { maxIterations: 2 } },
+    tools: { explore: { agent: "fast" } },
+  };
+  const fetchMock = replay([
+    { tool_calls: [{ id: "a", type: "function", function: { name: "Grep", arguments: JSON.stringify({ pattern: "x" }) } }] },
+    { content: "Forced." },
+  ]);
+  await exploreTask(agentConfig, { task: "q", path: base, max_iterations: 1 });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+// --- the answer's own citation block ---------------------------------------------
+
+test("a citations block is verified and comes back as ordinary markdown", async () => {
+  answerWith("The handler lives in the app.\n\n<citations>\nsrc/app.ts:4 the handler\n</citations>");
+  const result = await exploreTask(config, { task: "q", path: base });
+  expect(result.text).toContain("**Citations**");
+  expect(result.text).toContain("- `src/app.ts:4` — the handler");
+  expect(result.text).not.toContain("<citations>");
+  expect(result.text).toContain("1 citation checked");
+  expect(result.text).toContain("all resolve");
+});
+
+test("a citations block naming a file that does not exist is still caught", async () => {
+  answerWith("Routing.\n\n<citations>\nsrc/router.ts:88 the router\n</citations>");
+  const result = await exploreTask(config, { task: "q", path: base });
+  expect(result.text).toContain("names a file that does not exist");
+  expect(result.text).toContain("src/router.ts:88");
+  // Named once. The rendered block puts `src/router.ts:88` in a code span, which the path check
+  // would otherwise pick up as a second, separate complaint about the same invented file.
+  expect(result.text).not.toContain("Files:");
+});
+
+test("an agent's systemPrompt replaces the explore contract rather than stacking on it", async () => {
+  const agentConfig: LocallyConfig = {
+    ...config,
+    agents: { own: { systemPrompt: "You are a bespoke explorer." } },
+    tools: { explore: { agent: "own" } },
+  };
+  const fetchMock = replay([{ content: "Done." }]);
+  await exploreTask(agentConfig, { task: "q", path: base, breadth: "very thorough" });
+  const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+  const sent = JSON.parse(init.body as string).messages[0].content as string;
+  expect(sent).toBe("You are a bespoke explorer.");
+  expect(sent).not.toContain("read-only code-exploration agent");
 });

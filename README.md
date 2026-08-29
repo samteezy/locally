@@ -37,7 +37,7 @@ That's the whole happy path. Want multiple models, route explore vs. run to diff
 
 ### `explore_task`
 
-A read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. It greps with ripgrep and reads targeted excerpts, returning a conclusion with `file:line` citations rather than file dumps. Read-only — the model can call `explore_files` and `read_file` but cannot write. Use for analysis, Q&A, and understanding.
+A read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. It greps with ripgrep and reads targeted excerpts, returning a conclusion with `file:line` citations rather than file dumps. Read-only — the model can call `Grep`, `Glob` and `Read` but cannot write. Use for analysis, Q&A, and understanding.
 
 It is strongest at inventory work — list, enumerate, locate, "where is X", naming-convention sweeps — and weaker at open-ended "explain how this is wired" questions, so verify those before relying on them.
 
@@ -47,13 +47,15 @@ Set `breadth` to tune how widely it searches: `"medium"` (default) checks the mo
 
 **Citations are checked before they come back.** Every location the answer names is re-resolved against the filesystem and confirmed to be a real file with that line in range; the result ends with a `Citations:` line naming any that did not. The check does not confirm the *symbol* named at that line — that needs a parser per language — so it catches invented files and out-of-range numbers, not a right line cited for the wrong reason.
 
-Four forms are read, because a model writes citations in all of them: inline `src/app.ts:12`, a range `src/app.ts:12-30`, a markdown `| File | Line |` table row, and prose ("`src/app.ts`, lines 26-450"). Reading only the first reported an answer whose citations were *all* in table cells as citing nothing at all. The three outcomes are worded apart from each other — "no citations could be parsed", "they name a file that does not exist", and "they point past the end of the file" are different messages to the reader and used to read the same.
+The answer is asked to end with a `<citations>` block — one location per line, `path:line` or `path:start-end`, optionally followed by a few words — and when it does, that block is what gets checked, exactly. It never reaches you: it comes back rendered as an ordinary **Citations** list. `<final_answer>` is accepted as the same tag, which is what models trained against the FastContext exploration harness emit.
+
+When there is no block, four prose forms are read instead, because a model writes citations in all of them: inline `src/app.ts:12`, a range `src/app.ts:12-30`, a markdown `| File | Line |` table row, and prose ("`src/app.ts`, lines 26-450"). Reading only the first reported an answer whose citations were *all* in table cells as citing nothing at all. The three outcomes are worded apart from each other — "no citations could be parsed", "they name a file that does not exist", and "they point past the end of the file" are different messages to the reader and used to read the same.
 
 A citation written short — `agent-loop.ts:107` rather than `src/llm/agent-loop.ts:107` — is resolved rather than reported missing. Resolution tries the `path` you mapped first, then each root, then a targeted search for a file whose path ends with the cited one. Trying `path` first matters: a run mapped at `apps/web/src/features` cites basenames from it, and against the repository root alone those resolve to nothing.
 
 **File paths are checked for existence.** A model that gets the *shape* of an answer right will fill it with files that do not exist — a correct list of 12 database tables generating a table of one schema file per table, seven of them invented, each with a plausible description, from a directory it never opened. Every file path the answer sets apart in backticks or a table cell is looked for in the tree, and the ones that are nowhere are listed in a `Files:` line.
 
-**Files described but never looked at get named.** The complement of the check above: those files are real, so nothing flags them, and the run may still never have opened one. Files the answer names that were neither read with `read_file` nor matched by a search are listed in a `Coverage:` line. A search hit counts — the contract accepts one as evidence, and counting only `read_file` would flag the tool's own recommended workflow.
+**Files described but never looked at get named.** The complement of the check above: those files are real, so nothing flags them, and the run may still never have opened one. Files the answer names that were neither read with `Read` nor matched by a search are listed in a `Coverage:` line. A search hit counts — the contract accepts one as evidence, and counting only `Read` would flag the tool's own recommended workflow.
 
 **Asserted names are checked too.** Small models are accurate about structure they read and confabulate the rest, and the confabulations tend to be *names* — a table, an env var, a constant that sounds right for the codebase but is in none of it. Every distinctive identifier the answer names in backticks is searched for across `allowedRoots`, and the ones that appear nowhere are listed in a `Symbols:` line.
 
@@ -67,7 +69,7 @@ The model is also asked to name the search behind any list it produces, so a par
 
 ### `run_task`
 
-Generate code, draft content, or implement changes. The model runs an agentic loop with full read/write access: it can call `explore_files`, `read_file`, `write_file`, `patch_file`, and `run_shell` (see below) before producing output. Use for writing, editing, and implementing.
+Generate code, draft content, or implement changes. The model runs an agentic loop with full read/write access: it can call `Grep`, `Glob`, `Read`, `write_file`, `patch_file`, and `run_shell` (see below) before producing output. Use for writing, editing, and implementing.
 
 ### `usage_report`
 
@@ -96,7 +98,7 @@ Token counts depend on the endpoint returning a `usage` block (`prompt_tokens` /
 | `system_prompt` | string | — | Optional system context |
 | `agent` | string | — | Named agent from config. Falls back to the tool-specific default in `config.tools`, then the global `default`. |
 | `max_tokens` | number | config `maxTokens` | Override max completion tokens for this call (overrides the agent's `maxTokens`). |
-| `max_iterations` | number | `10` / breadth | Maximum agentic loop iterations before forcing a final answer. `run_task` defaults to 10; `explore_task` defaults to its breadth budget (8 or 20). |
+| `max_iterations` | number | agent / breadth | Maximum agentic loop iterations before forcing a final answer. Falls back to the agent's `maxIterations`, then to `run_task`'s 10 or `explore_task`'s breadth budget (8 or 20). |
 | `breadth` | string | `medium` | `explore_task` only — `"medium"` or `"very thorough"`. Tunes search width and the default iteration budget. |
 
 ### `run_shell` allowlist
@@ -111,8 +113,8 @@ Token counts depend on the endpoint returning a `usage` block (`prompt_tokens` /
 | `tsc` `eslint` `prettier` | Linting and type checking |
 
 Reading and searching are deliberately **not** here: `cat`/`head`/`tail`/`stat` and `find`/`grep`/`rg`
-would sidestep the `allowedRoots` fence, so they are omitted and the confined `read_file` /
-`explore_files` tools cover that ground instead.
+would sidestep the `allowedRoots` fence, so they are omitted and the confined `Read` / `Grep` /
+`Glob` tools cover that ground instead.
 
 ### Workflow example
 
@@ -142,7 +144,8 @@ There are two places config can come from, and they're meant for different thing
 |--------|-------------------|-------------|
 | `baseUrl` / `model` / `apiKey` | ✅ env | ✅ |
 | transport `mode` / `port` / `host` | ✅ env / arg | ✅ |
-| `timeout`, `maxTokens` | ❌ (file / per-call only) | ✅ |
+| `timeout`, `maxTokens`, `temperature`, `topP`, `maxIterations` | ❌ (file / per-call only) | ✅ |
+| `systemPrompt`, `extraBody` | ❌ (file only) | ✅ |
 | `agents`, `tools` routing | ❌ (nested) | ✅ |
 | `allowedRoots`, `ignorePatterns` | ❌ (array) | ✅ |
 | `allowedHosts`, `allowedOrigins` (HTTP) | ❌ (array) | ✅ |
@@ -190,6 +193,35 @@ Agent configs are **merged on top of `default`** — only specify what differs. 
 The optional `timeout` field (seconds, default `600`) bounds each request to the model endpoint. Raise it for slow local models or large `very thorough` sweeps; a request that exceeds it returns a `timeout` error. `timeout` can be set on `default` or per-agent.
 
 The optional `maxTokens` field caps the completion length, sent to the endpoint as `max_tokens`. Like the other fields it can be set on `default` or per-agent (and is merged the same way). The per-call [`max_tokens` parameter](#shared-parameters) overrides it for a single call. Omit it to let the endpoint use its own default.
+
+#### Per-agent model settings
+
+Five more optional fields, on `default` or per-agent, for pointing locally at a model that wants a particular setup:
+
+| Field | Effect |
+| --- | --- |
+| `temperature` / `topP` | Sent as `temperature` / `top_p`. Unset means neither is sent and the endpoint decides — the long-standing default, unchanged. |
+| `extraBody` | An object merged into the request body **last**, so it can override anything locally sends. |
+| `systemPrompt` | **Replaces** the tool's own contract for this agent rather than being appended to it. The per-call `system_prompt` is still appended on top. |
+| `maxIterations` | This agent's default loop budget. A `max_iterations` on the call still wins; without one it beats `explore_task`'s breadth default. |
+
+`extraBody` is how you turn a reasoning model's thinking off, because there is no portable spelling for it: Ollama takes `reasoning_effort`, llama.cpp and vLLM take `chat_template_kwargs`. Rather than sniff the endpoint, locally lets whoever configured it say which.
+
+```json
+{
+  "agents": {
+    "explorer": {
+      "model": "some-explorer-4b",
+      "temperature": 0,
+      "maxIterations": 6,
+      "extraBody": { "chat_template_kwargs": { "enable_thinking": false } }
+    }
+  },
+  "tools": { "explore": { "agent": "explorer" } }
+}
+```
+
+Together with `systemPrompt`, this is enough to run a model fine-tuned against its own exploration harness — its prompt, its sampling, its turn budget — without locally shipping anything that knows about that particular model. The tools it is offered are named `Read`, `Grep` and `Glob`, which is what such models are trained to call.
 
 The optional top-level `ignorePatterns` array lists extra directory names or glob patterns to exclude from the directory tree and file exploration. It is merged on top of the built-in ignore list (`node_modules`, `.git`, `dist`, `build`, `.next`, `.nuxt`, `__pycache__`, `.cache`, `.turbo`, `coverage`, `.nyc_output`).
 

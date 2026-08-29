@@ -20,8 +20,6 @@ const BINARY_EXTENSIONS = new Set([
 
 /** Listing entries are one line each, so this can be far higher than the content cap. */
 const MAX_FILES_DEFAULT = 200;
-/** Whole-file dumps are expensive; keep the opt-in path narrow. */
-const MAX_CONTENT_FILES_DEFAULT = 50;
 const MAX_RESULTS_DEFAULT = 200;
 const MAX_CONTEXT_LINES = 5;
 
@@ -146,15 +144,14 @@ export async function buildTree(
 interface FileEntry {
   path: string;
   size: number;
+  /** Null for a file too large to count cheaply; it is still listed, just without a line count. */
   lines: number | null;
-  content?: string;
 }
 
 async function describeFile(
   fullPath: string,
   rootPath: string,
-  maxFileSizeKb: number,
-  withContent: boolean
+  maxFileSizeKb: number
 ): Promise<FileEntry | null> {
   try {
     const info = await stat(fullPath);
@@ -165,11 +162,7 @@ async function describeFile(
       lines: null,
     };
     if (info.size <= maxFileSizeKb * 1024) {
-      const content = await readFile(fullPath, "utf-8");
-      entry.lines = content.split("\n").length;
-      if (withContent) entry.content = content;
-    } else if (withContent) {
-      return null; // oversized: excluded from dumps, still listed
+      entry.lines = (await readFile(fullPath, "utf-8")).split("\n").length;
     }
     return entry;
   } catch {
@@ -264,37 +257,64 @@ function fmtSize(bytes: number): string {
   return `${Math.round(bytes / 1024)}K`;
 }
 
-export interface ExploreFilesParams {
-  path: string;
-  query?: string;
-  file_pattern?: string;
-  context_lines?: number;
+/**
+ * Two tools, not one with a mode switch.
+ *
+ * `exploreFiles` used to be a single entry point whose behaviour depended on whether `query` was
+ * set: with one it searched contents, without one it listed (or, before 0.2, dumped) a directory.
+ * Eleven optional parameters and two unrelated result shapes behind one name is a lot of tool for a
+ * small model to hold, and the mode switch was invisible in the schema. The two code paths were
+ * already separate underneath, so this splits them at the tool boundary as well.
+ *
+ * The names are `Grep` and `Glob` (and `Read`, in read-file.ts) because that is what the rest of
+ * the industry calls these three, and therefore what every model has seen most of during training.
+ * A model that guesses at our tool surface should guess right.
+ */
+
+export interface GrepParams {
+  pattern: string;
+  /** Directory or file to search. Filled in from the task's own path when the model omits it. */
+  path?: string;
+  glob?: string;
+  /** Case-insensitive search. Named for the ripgrep flag, as in every other agent's Grep. */
+  "-i"?: boolean;
+  /** Lines of context around each match. */
+  "-C"?: number;
   max_results?: number;
   max_matches_per_file?: number;
-  include_content?: boolean;
-  max_depth?: number;
-  max_file_size_kb?: number;
-  max_files?: number;
   ignore_patterns?: string[];
 }
 
-export const EXPLORE_FILES_SCHEMA: Record<string, unknown> = {
+export interface GlobParams {
+  // Glob to match, e.g. "*.ts" or "src/**/*.tsx". Omit to list everything under `path`.
+  pattern?: string;
+  path?: string;
+  max_files?: number;
+  max_depth?: number;
+  max_file_size_kb?: number;
+  ignore_patterns?: string[];
+}
+
+export const GREP_SCHEMA: Record<string, unknown> = {
   type: "object",
   properties: {
+    pattern: {
+      type: "string",
+      description: "Regular expression to search file contents for. Returns matching lines as path:line:text.",
+    },
     path: {
       type: "string",
-      description: "Directory to search or list",
+      description: "Directory or file to search in. Defaults to the directory the task was mapped at.",
     },
-    query: {
+    glob: {
       type: "string",
-      description:
-        "Regex to search file contents for, via ripgrep (or grep). Returns matching lines as path:line:text — this is the main way to use this tool. Omit it only to list what files exist.",
+      description: 'Restrict the search to files matching this glob, e.g. "*.ts" or "src/**/*.tsx"',
     },
-    file_pattern: {
-      type: "string",
-      description: 'Restrict to files matching this glob, e.g. "*.ts" or "src/**/*.tsx"',
+    "-i": {
+      type: "boolean",
+      description: "Case-insensitive search (default: false)",
     },
-    context_lines: {
+    "-C": {
       type: "number",
       description: `Lines of context to show around each match (default: 0, max: ${MAX_CONTEXT_LINES})`,
     },
@@ -304,24 +324,7 @@ export const EXPLORE_FILES_SCHEMA: Record<string, unknown> = {
     },
     max_matches_per_file: {
       type: "number",
-      description: "Maximum matches per file. Useful for \"which files mention X\" sweeps (e.g. 1).",
-    },
-    include_content: {
-      type: "boolean",
-      description:
-        "Return whole file contents instead of a listing. Expensive — prefer query, then read_file for the specific files you need.",
-    },
-    max_depth: {
-      type: "number",
-      description: "Max directory depth to traverse when listing (default: 5)",
-    },
-    max_file_size_kb: {
-      type: "number",
-      description: "Skip files larger than this many KB when returning contents (default: 100)",
-    },
-    max_files: {
-      type: "number",
-      description: `Maximum files to list (default: ${MAX_FILES_DEFAULT}, or ${MAX_CONTENT_FILES_DEFAULT} with include_content)`,
+      description: 'Maximum matches per file. Useful for "which files mention X" sweeps (e.g. 1).',
     },
     ignore_patterns: {
       type: "array",
@@ -329,31 +332,48 @@ export const EXPLORE_FILES_SCHEMA: Record<string, unknown> = {
       description: "Additional directory names or globs to ignore",
     },
   },
-  required: ["path"],
+  required: ["pattern"],
 };
 
-export async function exploreFiles(params: ExploreFilesParams): Promise<string> {
-  const {
-    path: dirPath,
-    query,
-    file_pattern,
-    context_lines,
-    max_results = MAX_RESULTS_DEFAULT,
-    max_matches_per_file,
-    include_content = false,
-    max_depth = 5,
-    max_file_size_kb = 100,
-    max_files,
-    ignore_patterns,
-  } = params;
+export const GLOB_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    pattern: {
+      type: "string",
+      description: 'Glob to match file paths against, e.g. "*.ts" or "src/**/*.tsx". Omit to list every file under path.',
+    },
+    path: {
+      type: "string",
+      description: "Directory to search in. Defaults to the directory the task was mapped at.",
+    },
+    max_files: {
+      type: "number",
+      description: `Maximum files to list (default: ${MAX_FILES_DEFAULT})`,
+    },
+    max_depth: {
+      type: "number",
+      description: "Max directory depth to traverse when ripgrep is unavailable (default: 5)",
+    },
+    max_file_size_kb: {
+      type: "number",
+      description: "Skip counting lines for files larger than this many KB (default: 100)",
+    },
+    ignore_patterns: {
+      type: "array",
+      items: { type: "string" },
+      description: "Additional directory names or globs to ignore",
+    },
+  },
+  required: [],
+};
 
-  const mergedIgnoreDirs = new Set<string>(IGNORED_DIRS);
-  if (ignore_patterns) {
-    for (const p of ignore_patterns) {
-      mergedIgnoreDirs.add(p);
-    }
-  }
+function mergedIgnores(extra: string[] | undefined): Set<string> {
+  const merged = new Set<string>(IGNORED_DIRS);
+  for (const p of extra ?? []) merged.add(p);
+  return merged;
+}
 
+async function assertDirectory(dirPath: string): Promise<void> {
   let dirStat;
   try {
     dirStat = await stat(dirPath);
@@ -363,102 +383,91 @@ export async function exploreFiles(params: ExploreFilesParams): Promise<string> 
   if (!dirStat.isDirectory()) {
     throw new Error(`Path is not a directory: ${dirPath}`);
   }
+}
 
-  if (query) {
-    return searchContents(dirPath, query, {
-      file_pattern,
-      context_lines,
-      max_results,
-      max_matches_per_file,
-      ignore: mergedIgnoreDirs,
-    });
-  }
+/**
+ * Find files by name pattern. Ripgrep when it is available — it honours .gitignore and real
+ * `**` globs — with a Node walk as the fallback, which matches on a prefix/substring instead.
+ *
+ * Deliberately does not emit a directory tree. The task prompt already carries one, and re-sending
+ * it on every call is what made a single broad call cheaper than several focused ones.
+ */
+export async function globFiles(params: GlobParams): Promise<string> {
+  const { pattern, path: rawPath, max_files, max_depth = 5, max_file_size_kb = 100 } = params;
+  const dirPath = rawPath ?? process.cwd();
+  const ignore = mergedIgnores(params.ignore_patterns);
 
-  const fileCap = max_files ?? (include_content ? MAX_CONTENT_FILES_DEFAULT : MAX_FILES_DEFAULT);
-  const sections: string[] = [];
+  await assertDirectory(dirPath);
 
-  const tree = await buildTree(dirPath, max_depth, mergedIgnoreDirs);
-  sections.push(`## Directory: ${dirPath}\n\n.\n${tree}`);
-
-  const useRg = await hasRipgrep();
-  let paths: string[] | null = useRg
-    ? await listFilesWithRg(dirPath, file_pattern, mergedIgnoreDirs, fileCap)
-    : null;
-  if (paths === null) {
-    paths = await walkFiles(dirPath, max_depth, file_pattern, mergedIgnoreDirs, fileCap);
-  }
+  const fileCap = max_files ?? MAX_FILES_DEFAULT;
+  const viaRg = (await hasRipgrep()) ? await listFilesWithRg(dirPath, pattern, ignore, fileCap) : null;
+  const paths = viaRg ?? (await walkFiles(dirPath, max_depth, pattern, ignore, fileCap));
 
   const entries: FileEntry[] = [];
   for (const p of paths) {
     if (BINARY_EXTENSIONS.has(extname(p).toLowerCase())) continue;
-    const entry = await describeFile(isAbsolute(p) ? p : join(dirPath, p), dirPath, max_file_size_kb, include_content);
+    const entry = await describeFile(isAbsolute(p) ? p : join(dirPath, p), dirPath, max_file_size_kb);
     if (entry) entries.push(entry);
   }
 
-  if (entries.length === 0) {
-    sections.push("## Files\n\n(no files found matching criteria)");
-    return sections.join("\n\n---\n\n");
-  }
+  const what = pattern ? `"${pattern}" in ${dirPath}` : dirPath;
+  if (entries.length === 0) return `## Files: ${what}\n\n(no files found matching criteria)`;
 
   const truncated = entries.length >= fileCap;
   const header = truncated
-    ? `## Files (${entries.length}, truncated — use file_pattern or a subdirectory path to narrow scope)`
-    : `## Files (${entries.length})`;
+    ? `## Files: ${what} (${entries.length}, truncated — narrow the pattern or use a subdirectory)`
+    : `## Files: ${what} (${entries.length})`;
 
-  if (include_content) {
-    const blocks = entries.map((f) => {
-      const lang = extname(f.path).slice(1);
-      return `### ${f.path}\n\`\`\`${lang}\n${f.content ?? ""}\n\`\`\``;
-    });
-    sections.push(`${header}\n\n${blocks.join("\n\n")}`);
-  } else {
-    // Listing, not a dump: enough to choose what to read next, without spending the
-    // context on files the task never needed.
-    const rows = entries.map((f) => {
-      const lines = f.lines === null ? "—" : `${f.lines} lines`;
-      return `${f.path} · ${lines} · ${fmtSize(f.size)}`;
-    });
-    sections.push(
-      `${header}\n\n${rows.join("\n")}\n\nUse query to search these files, or read_file to read one.`
-    );
-  }
+  const rows = entries.map((f) => {
+    const lines = f.lines === null ? "—" : `${f.lines} lines`;
+    return `${f.path} · ${lines} · ${fmtSize(f.size)}`;
+  });
 
-  return sections.join("\n\n---\n\n");
+  return `${header}\n\n${rows.join("\n")}\n\nUse Grep to search these files, or Read to open one.`;
 }
 
-interface SearchOptions {
-  file_pattern?: string;
-  context_lines?: number;
-  max_results: number;
-  max_matches_per_file?: number;
-  ignore: Set<string>;
-}
-
-async function searchContents(dirPath: string, query: string, opts: SearchOptions): Promise<string> {
-  const { file_pattern, context_lines, max_results, max_matches_per_file, ignore } = opts;
-  const context = Math.min(Math.max(context_lines ?? 0, 0), MAX_CONTEXT_LINES);
+/**
+ * Search file contents. Ripgrep when available, grep otherwise; both return `path:line:text`,
+ * which is also the shape the run's coverage tracking reads to learn which files were seen inside.
+ */
+export async function grepFiles(params: GrepParams): Promise<string> {
+  const {
+    pattern,
+    path: rawPath,
+    glob,
+    max_results = MAX_RESULTS_DEFAULT,
+    max_matches_per_file,
+  } = params;
+  const dirPath = rawPath ?? process.cwd();
+  const ignore = mergedIgnores(params.ignore_patterns);
+  const context = Math.min(Math.max(params["-C"] ?? 0, 0), MAX_CONTEXT_LINES);
   const useRg = await hasRipgrep();
 
-  // The tree is deliberately not emitted here: a search runs many times per task, and
-  // re-sending the whole directory map on each call is what makes one big dump cheaper
-  // than several focused searches — exactly the behaviour we want to discourage.
+  // No directory tree here: a search runs many times per task, and re-sending the whole map on
+  // each call is what makes one big sweep cheaper than several focused ones.
   const label = useRg ? "ripgrep" : "grep";
   let searchOutput: string;
 
   try {
     const args = useRg
-      ? ["--no-heading", "--line-number", "--color=never", ...rgIgnoreArgs(ignore)]
-      : ["-rn", "--color=never", ...grepIgnoreArgs(ignore)];
+      ? ["--no-heading", "--line-number", "--color=never"]
+      : ["-rn", "--color=never"];
 
-    if (file_pattern) {
-      if (useRg) args.push("--glob", file_pattern);
-      else args.push(`--include=${file_pattern}`);
+    if (glob) {
+      if (useRg) args.push("--glob", glob);
+      else args.push(`--include=${glob}`);
     }
+    // Ignores go last. Ripgrep resolves overlapping globs last-match-wins, so a positive
+    // `--glob "*.ts"` emitted after `--glob "!**/node_modules/**"` pulls vendored files back in.
+    // The same ordering bug was fixed in listFilesWithRg and missed here.
+    args.push(...(useRg ? rgIgnoreArgs(ignore) : grepIgnoreArgs(ignore)));
+
+    if (params["-i"]) args.push("-i");
     if (context > 0) args.push("-C", String(context));
     if (max_matches_per_file !== undefined) args.push("-m", String(max_matches_per_file));
 
-    // `--` so a query starting with "-" is treated as a pattern, not a flag.
-    args.push("--", query, dirPath);
+    // `--` so a pattern starting with "-" is treated as a pattern, not a flag.
+    args.push("--", pattern, dirPath);
 
     const { stdout } = await execFileAsync(useRg ? "rg" : "grep", args, { maxBuffer: 10 * 1024 * 1024 });
     searchOutput = capResults(stdout.trim(), max_results) || "(no results)";
@@ -466,5 +475,5 @@ async function searchContents(dirPath: string, query: string, opts: SearchOption
     searchOutput = handleSearchError(err);
   }
 
-  return `## Search (${label}): "${query}" in ${dirPath}\n\n${searchOutput}`;
+  return `## Search (${label}): "${pattern}" in ${dirPath}\n\n${searchOutput}`;
 }

@@ -2,7 +2,7 @@ import { test, expect } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { verifyCitations, formatCitationReport, extractCitations } from "./verify-citations.js";
+import { verifyCitations, formatCitationReport, extractCitations, renderCitationBlock } from "./verify-citations.js";
 import { resolveRoots } from "./sandbox.js";
 
 const base = realpathSync(mkdtempSync(join(tmpdir(), "locally-cite-")));
@@ -203,4 +203,58 @@ test("resolves a basename from a mapped subdirectory even without the task path"
 test("a task path outside the roots does not smuggle a file in", async () => {
   const checks = await verifyCitations("See passwd.txt:1.", roots, "/etc");
   expect(checks[0]).toMatchObject({ ok: false, reason: "file not found" });
+});
+
+// --- the answer's own citation block --------------------------------------------
+// Everything above reverse-engineers where a model put its locations. Asking for a block makes the
+// common case exact; the heuristics stay as the fallback for a model that ignores the instruction.
+
+test("reads citations straight out of a <citations> block", () => {
+  const found = extractCitations(
+    [
+      "The loop dispatches in parallel.",
+      "",
+      "<citations>",
+      "src/llm/agent-loop.ts:238-279 parallel dispatch",
+      "src/config.ts:107 agent resolution",
+      "</citations>",
+    ].join("\n")
+  );
+  expect(found).toEqual([
+    { path: "src/llm/agent-loop.ts", line: 238, endLine: 279 },
+    { path: "src/config.ts", line: 107 },
+  ]);
+});
+
+test("<final_answer> is the same block under the name FastContext-trained models emit", () => {
+  const found = extractCitations("<final_answer>\n/abs/src/router.py:42-58\n</final_answer>");
+  expect(found).toEqual([{ path: "/abs/src/router.py", line: 42, endLine: 58 }]);
+});
+
+test("a block wins over the prose, so a stray path:line in the body is not re-added", () => {
+  const found = extractCitations("See src/other.ts:9.\n\n<citations>\nsrc/app.ts:4\n</citations>");
+  expect(found).toEqual([{ path: "src/app.ts", line: 4 }]);
+});
+
+test("lines in a block that are not path:line shaped are skipped, not guessed at", () => {
+  const found = extractCitations("<citations>\nno idea where this lives\nsrc/app.ts:4\n</citations>");
+  expect(found).toEqual([{ path: "src/app.ts", line: 4 }]);
+});
+
+test("without a block the four prose forms are still read", () => {
+  expect(extractCitations("The handler is at src/app.ts:4.")).toEqual([{ path: "src/app.ts", line: 4 }]);
+});
+
+test("rendering turns the block into markdown and keeps the notes", () => {
+  const rendered = renderCitationBlock(
+    "The loop dispatches in parallel.\n\n<citations>\nsrc/llm/agent-loop.ts:238-279 parallel dispatch\n</citations>"
+  );
+  expect(rendered).toContain("The loop dispatches in parallel.");
+  expect(rendered).toContain("**Citations**");
+  expect(rendered).toContain("- `src/llm/agent-loop.ts:238-279` — parallel dispatch");
+  expect(rendered).not.toContain("<citations>");
+});
+
+test("rendering leaves an answer with no block untouched", () => {
+  expect(renderCitationBlock("Just prose, at src/app.ts:4.")).toBe("Just prose, at src/app.ts:4.");
 });

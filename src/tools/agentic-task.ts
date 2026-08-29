@@ -1,11 +1,7 @@
-import { buildTree, exploreFiles, IGNORED_DIRS, type ExploreFilesParams } from "./explore-files.js";
+import { buildTree, IGNORED_DIRS } from "./explore-files.js";
 import { runAgentLoop, type AgentTool, type AgentRunResult, type DraftAnswerHook } from "../llm/agent-loop.js";
-import { resolveAgentConfig, resolveToolAgent, type LocallyConfig } from "../config.js";
+import { resolveAgentConfig, resolveToolAgent, type LocallyConfig, type ResolvedAgentConfig } from "../config.js";
 import { assertWithinRoots, effectiveRoots } from "./sandbox.js";
-import type { ReadFileParams } from "./read-file.js";
-import type { WriteFileParams } from "./write-file.js";
-import type { PatchFileParams } from "./patch-file.js";
-import type { RunShellParams } from "./run-shell.js";
 import type { Message } from "../llm/client.js";
 import { isAbsolute, join } from "node:path";
 
@@ -39,6 +35,12 @@ export interface AgenticTaskParams {
   sweepFloor?: { minIterations: number; minFilesRead: number };
   /** The message pushed back when the floor is not met. Given what the run has done so far. */
   sweepNudge?: (state: { iterations: number; filesRead: number }) => string;
+  /**
+   * Already-resolved agent config. A tool that has to know the agent's settings before building the
+   * run — explore_task needs `maxIterations` to size its sweep floor — resolves once and passes the
+   * result in, rather than resolving the same config twice.
+   */
+  resolvedAgent?: ResolvedAgentConfig;
 }
 
 export async function runAgenticTask(
@@ -50,7 +52,7 @@ export async function runAgenticTask(
   const { task, path, system_prompt, agent, max_tokens, max_iterations, baseSystemPrompt } = params;
   const { sweepFloor, sweepNudge, onProgress, signal } = params;
 
-  const agentConfig = resolveAgentConfig(config, resolveToolAgent(config, toolKey, agent));
+  const agentConfig = params.resolvedAgent ?? resolveAgentConfig(config, resolveToolAgent(config, toolKey, agent));
   if (max_tokens !== undefined) {
     agentConfig.maxTokens = max_tokens;
   }
@@ -118,8 +120,12 @@ export async function runAgenticTask(
   const messages: Message[] = [];
 
   // Tool-supplied base prompt first (e.g. the Explore contract), then the caller's
-  // optional system_prompt — both are kept, not one replacing the other.
-  const systemContent = [baseSystemPrompt, system_prompt].filter(Boolean).join("\n\n");
+  // optional system_prompt — both are kept, not one replacing the other. An agent configured with
+  // its own systemPrompt replaces the tool's contract rather than stacking on it: a model trained
+  // against a fixed harness wants that harness, not ours plus that harness.
+  const systemContent = [agentConfig.systemPrompt ?? baseSystemPrompt, system_prompt]
+    .filter(Boolean)
+    .join("\n\n");
   if (systemContent) {
     messages.push({ role: "system", content: systemContent });
   }
@@ -157,64 +163,57 @@ export async function runAgenticTask(
 
   messages.push({ role: "user", content: userContent });
 
-  // Wrap each path-bearing tool so its path/cwd is validated against the roots before it runs.
-  // Thrown LocallyErrors are caught by the agent loop and fed back to the model as a tool result,
-  // so the model self-corrects to a valid path rather than aborting the run.
-  const resolvedTools: AgentTool[] = tools.map((t) => {
-    switch (t.definition.function.name) {
-      case "read_file":
-        return {
-          ...t,
-          handler: (args: unknown) => {
+  // Every tool is wrapped the same way, driven by the fence it declares (see ToolFence): its path
+  // argument is validated against the allowed roots before it runs, and what the call proves about
+  // the files it touched is recorded for the coverage note. This used to be a switch over tool
+  // names whose default branch returned the tool unwrapped, so renaming a tool would have quietly
+  // taken it out of the sandbox. Thrown LocallyErrors are caught by the agent loop and fed back to
+  // the model as a tool result, so it self-corrects to a valid path rather than aborting the run.
+  const fallbackRoot = path ?? roots[0];
+
+  const resolvedTools: AgentTool[] = tools.map((tool) => {
+    const { fence } = tool;
+    return {
+      ...tool,
+      handler: async (args: unknown) => {
+        const call = { ...(args as Record<string, unknown>) };
+        const given = call[fence.pathKey];
+        const requested =
+          typeof given === "string" && given.length > 0
+            ? given
+            : fence.defaultsToTaskRoot
+              ? fallbackRoot
+              : undefined;
+
+        if (requested === undefined) {
+          throw new Error(`"${fence.pathKey}" is required and must be an absolute path.`);
+        }
+
+        const canonical = assertWithinRoots(requested, roots, { mustExist: fence.mustExist });
+        call[fence.pathKey] = canonical;
+
+        if (fence.mergesIgnorePatterns && configIgnore.length > 0) {
+          call.ignore_patterns = [...configIgnore, ...((call.ignore_patterns as string[] | undefined) ?? [])];
+        }
+
+        const output = await tool.handler(call);
+
+        switch (fence.evidence) {
+          case "read":
             // The canonical path, so the same file reached by two spellings counts once.
-            const canonical = assertWithinRoots((args as ReadFileParams).path, roots, { mustExist: true });
             filesRead.add(canonical);
-            return t.handler(args);
-          },
-        };
-      case "explore_files":
-        return {
-          ...t,
-          handler: async (args: unknown) => {
-            const p = args as ExploreFilesParams;
-            assertWithinRoots(p.path, roots, { mustExist: true });
-            const merged = configIgnore.length > 0
-              ? { ...p, ignore_patterns: [...configIgnore, ...(p.ignore_patterns ?? [])] }
-              : p;
-            const output = await exploreFiles(merged);
-            if (p.query) recordSearchHits(output);
-            else recordListedFiles(output, p.path);
-            return output;
-          },
-        };
-      case "write_file":
-        return {
-          ...t,
-          handler: (args: unknown) => {
-            assertWithinRoots((args as WriteFileParams).path, roots);
-            return t.handler(args);
-          },
-        };
-      case "patch_file":
-        return {
-          ...t,
-          handler: (args: unknown) => {
-            assertWithinRoots((args as PatchFileParams).path, roots);
-            return t.handler(args);
-          },
-        };
-      case "run_shell":
-        return {
-          ...t,
-          handler: (args: unknown) => {
-            const p = args as RunShellParams;
-            const canonicalCwd = assertWithinRoots(p.cwd ?? process.cwd(), roots, { mustExist: true });
-            return t.handler({ ...p, cwd: canonicalCwd });
-          },
-        };
-      default:
-        return t;
-    }
+            break;
+          case "searchHits":
+            recordSearchHits(output);
+            break;
+          case "listing":
+            recordListedFiles(output, canonical);
+            break;
+        }
+
+        return output;
+      },
+    };
   });
 
   // The sweep floor lives here rather than in the loop because it is measured in files read, and
@@ -237,7 +236,7 @@ export async function runAgenticTask(
     agentConfig,
     messages,
     resolvedTools,
-    max_iterations,
+    max_iterations ?? agentConfig.maxIterations,
     onProgress,
     signal,
     onDraftAnswer

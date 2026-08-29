@@ -155,3 +155,38 @@ test("a network failure surfaces a retriable upstream error", async () => {
     retriable: true,
   });
 });
+
+test("sampling parameters reach the body only when they are set", async () => {
+  const fetchFn = stubFetch(() =>
+    fakeResponse({ json: { choices: [{ message: { content: "ok" } }] } })
+  );
+
+  await runCompletionWithTools(baseConfig, []);
+  let body = JSON.parse((fetchFn.mock.calls[0] as [string, RequestInit])[1].body as string);
+  // The default has always been to send neither and let the endpoint decide; keep it that way.
+  expect(body).not.toHaveProperty("temperature");
+  expect(body).not.toHaveProperty("top_p");
+
+  await runCompletionWithTools({ ...baseConfig, temperature: 0, topP: 0.8 }, []);
+  body = JSON.parse((fetchFn.mock.calls[1] as [string, RequestInit])[1].body as string);
+  expect(body.temperature).toBe(0);
+  expect(body.top_p).toBe(0.8);
+});
+
+test("extraBody is merged last, so the operator can override what locally sends", async () => {
+  const fetchFn = stubFetch(() =>
+    fakeResponse({ json: { choices: [{ message: { content: "ok" } }] } })
+  );
+  await runCompletionWithTools(
+    {
+      ...baseConfig,
+      maxTokens: 100,
+      extraBody: { reasoning_effort: "none", chat_template_kwargs: { enable_thinking: false }, max_tokens: 512 },
+    },
+    []
+  );
+  const body = JSON.parse((fetchFn.mock.calls[0] as [string, RequestInit])[1].body as string);
+  expect(body.reasoning_effort).toBe("none");
+  expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+  expect(body.max_tokens).toBe(512);
+});

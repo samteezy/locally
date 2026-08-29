@@ -43,6 +43,21 @@ const LINE_CELL_RE = /^(?:lines?\s+)?(\d+)(?:\s*[-–]\s*(\d+))?$/i;
 /** A cell holding a path and nothing else, once markdown decoration is stripped. */
 const PATH_CELL_RE = /^\/?(?:[\w.@+~-]+\/)*[\w.@+~-]+\.[A-Za-z][\w]*$/;
 
+/**
+ * The answer's own citation block.
+ *
+ * Everything else in this file reverse-engineers where a model put its locations, across four
+ * shapes, because we never asked for one. Asking for a block makes the common case exact instead of
+ * inferred, and the heuristics stay as the fallback for a model that ignores the instruction.
+ *
+ * `<final_answer>` is accepted as the same thing: it is what models trained against the FastContext
+ * exploration harness emit, and one alternation here is the entire cost of running one of them.
+ */
+const CITATION_BLOCK_RE = /<(citations|final_answer)>([\s\S]*?)<\/\1>/i;
+
+/** `src/app.ts:12`, `src/app.ts:12-40`, either optionally followed by a note. One per line. */
+const BLOCK_ENTRY_RE = /^\s*[-*]?\s*`?(\S+?)`?:(\d+)(?:\s*[-–]\s*(\d+))?`?\s*(.*)$/;
+
 export interface Citation {
   path: string;
   line: number;
@@ -105,7 +120,51 @@ function matchCitations(text: string, re: RegExp): Citation[] {
  * always a real citation pasted from tool output; a bare path near a number is not, so the looser
  * two forms stay outside.
  */
+/**
+ * Citations the answer stated outright, or null when it wrote no block. Entries that are not
+ * `path:line` shaped are skipped rather than guessed at — a block with prose in it should degrade
+ * to "these lines parsed", not to a manufactured citation.
+ */
+export function readCitationBlock(text: string): Citation[] | null {
+  const block = CITATION_BLOCK_RE.exec(text);
+  if (!block) return null;
+
+  const found: Citation[] = [];
+  for (const line of block[2].split("\n")) {
+    const m = BLOCK_ENTRY_RE.exec(line);
+    if (!m) continue;
+    found.push({ path: m[1], line: Number(m[2]), ...(m[3] ? { endLine: Number(m[3]) } : {}) });
+  }
+  return found;
+}
+
+/**
+ * Replace the block with the same citations as ordinary markdown, so the caller reads an answer
+ * rather than a tagged one. Returns the text unchanged when there is no block.
+ */
+export function renderCitationBlock(text: string): string {
+  const block = CITATION_BLOCK_RE.exec(text);
+  if (!block) return text;
+
+  const rows: string[] = [];
+  for (const line of block[2].split("\n")) {
+    const m = BLOCK_ENTRY_RE.exec(line);
+    if (!m) continue;
+    const range = m[3] ? `${m[2]}-${m[3]}` : m[2];
+    const note = m[4]?.trim();
+    rows.push(`- \`${m[1]}:${range}\`${note ? ` — ${note}` : ""}`);
+  }
+
+  const rendered = rows.length > 0 ? `**Citations**\n\n${rows.join("\n")}` : "";
+  return `${text.slice(0, block.index)}${rendered}${text.slice(block.index + block[0].length)}`.trim();
+}
+
 export function extractCitations(text: string): Citation[] {
+  // An explicit block is the answer telling us where it looked; take it at its word rather than
+  // also scanning the prose, which would re-add the guessing the block exists to remove.
+  const stated = readCitationBlock(text);
+  if (stated) return dedupe(stated);
+
   const prose = stripFences(text);
 
   const all = [
@@ -114,9 +173,13 @@ export function extractCitations(text: string): Citation[] {
     ...matchCitations(prose, PROSE_RANGE_RE),
   ];
 
+  return dedupe(all);
+}
+
+function dedupe(citations: Citation[]): Citation[] {
   const seen = new Set<string>();
   const unique: Citation[] = [];
-  for (const c of all) {
+  for (const c of citations) {
     const key = citationLabel(c);
     if (seen.has(key)) continue;
     seen.add(key);
