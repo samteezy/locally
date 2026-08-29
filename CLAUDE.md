@@ -100,6 +100,8 @@ For codebase Q&A, "where is X", how-something-works, and naming-convention sweep
 
 When adding or updating functionality, before committing, check that the README is still accurate and doesn't need updating.
 
+Before committing new work, ask the user whether to bump the version — don't decide it silently. If they say yes, bump `package.json` (via `npm version <x.y.z> --no-git-tag-version`, which updates `package-lock.json` too), update `SERVER_VERSION` in `src/server.ts` to match, and add a `CHANGELOG.md` entry. `src/server.test.ts` asserts the wire `serverInfo` against `package.json`, so a missed `SERVER_VERSION` fails the suite rather than drifting. Pre-1.0, breaking changes take the minor slot — note which surface broke, the MCP one (what a client calls) or the agent-loop one (the tools the local model is handed).
+
 ## Evals
 
 We periodically benchmark locally against the native frontier-model agents (Explore for exploration, the main loop for run/generation tasks) to track how much quality we trade for the cost savings. Stored runs live in `eval-runs/` as dated Markdown files, each with the test definition, both verbatim outputs, and an evaluation section (qualitative notes + a quantitative inaccuracy count verified against source).
