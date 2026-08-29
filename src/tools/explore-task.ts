@@ -23,6 +23,7 @@ How to work:
 - Use Glob to find out which files exist before deciding what to open — it takes a pattern like "*.ts" or "src/**/*.tsx" and returns paths with line counts.
 - Use Read to read targeted EXCERPTS (pass offset and limit for a line range). Do not read whole files unless they are small; you are locating code, not reviewing it.
 - Independent searches and reads are run in parallel, so issue them together in one turn rather than one at a time.
+- Grep and Glob skip files git ignores, such as build output and local config; every result header names the filter that ran. A search that finds nothing is retried without it automatically, and include_ignored forces it.
 - The directory map you are given is a starting point, not a boundary. If the answer depends on a file outside it, search for that file and read it.
 
 How to answer:

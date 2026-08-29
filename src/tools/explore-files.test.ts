@@ -1,9 +1,10 @@
 import { test, expect } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs";
-import { execSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, realpathSync } from "node:fs";
+import { execSync, execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { grepFiles, globFiles, findFilesNamed, resetRipgrepCache } from "./explore-files.js";
+import { grepFiles, globFiles, findFilesNamed, buildTree, IGNORED_DIRS, resetRipgrepCache } from "./explore-files.js";
+import { gitIgnoreView } from "./git-ignore.js";
 
 const base = mkdtempSync(join(tmpdir(), "locally-explore-"));
 
@@ -89,7 +90,7 @@ test("falls back to grep when ripgrep is not on PATH", async () => {
   resetRipgrepCache();
   try {
     const out = await grepFiles({ path: base, pattern: "needle" });
-    expect(out).toContain("## Search (grep)");
+    expect(out).toContain("## Search (grep,");
     expect(out).toMatch(/alpha\.ts:1:/);
     expect(out).not.toContain("node_modules");
   } finally {
@@ -152,4 +153,140 @@ test("a Grep glob does not pull ignored directories back in", async () => {
 test("-i makes the search case-insensitive", async () => {
   expect(await grepFiles({ path: base, pattern: "NEEDLE" })).toContain("(no results)");
   expect(await grepFiles({ path: base, pattern: "NEEDLE", "-i": true })).toContain("alpha.ts");
+});
+
+// --- git-backed fixture (issue #22) ----------------------------------------------
+// Every fixture above is a bare mkdtemp with no .git, where git has no opinion and the tools
+// behave as they always did. That is exactly why the gap shipped: the map, Read, Grep and Glob
+// disagreed about which files existed, and nothing here could see it.
+//
+// `--exclude-standard` honours the tester's own global excludes, so neutralise them first.
+process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+process.env.GIT_CONFIG_SYSTEM = "/dev/null";
+
+const gitBase = realpathSync(mkdtempSync(join(tmpdir(), "locally-gitexplore-")));
+execFileSync("git", ["init", "-q"], { cwd: gitBase });
+
+mkdirSync(join(gitBase, "src"));
+mkdirSync(join(gitBase, ".github"));
+mkdirSync(join(gitBase, "generated"));
+writeFileSync(join(gitBase, ".gitignore"), "generated/\n");
+writeFileSync(join(gitBase, "src", "app.ts"), "export const needle = 1;\n");
+writeFileSync(join(gitBase, ".github", "ci.yml"), "name: needle\n");
+writeFileSync(join(gitBase, "generated", "out.ts"), "export const onlyInGenerated = 1;\nconst needle = 2;\n");
+
+/** Run a block with ripgrep off PATH, so the grep/walkFiles backend answers instead. */
+async function withoutRipgrep<T>(fn: () => Promise<T>): Promise<T> {
+  const originalPath = process.env.PATH;
+  const stub = mkdtempSync(join(tmpdir(), "locally-greponly-"));
+  symlinkSync(execSync("which grep").toString().trim(), join(stub, "grep"));
+  symlinkSync(execSync("which git").toString().trim(), join(stub, "git"));
+  process.env.PATH = stub;
+  resetRipgrepCache();
+  try {
+    return await fn();
+  } finally {
+    process.env.PATH = originalPath;
+    resetRipgrepCache();
+  }
+}
+
+test("Grep searches hidden files — they are source, not build output", async () => {
+  const out = await grepFiles({ path: gitBase, pattern: "needle" });
+  expect(out).toContain(".github/ci.yml");
+  expect(out).toContain("src/app.ts");
+});
+
+test("Grep skips gitignored files and says which filter ran", async () => {
+  const out = await grepFiles({ path: gitBase, pattern: "needle" });
+  expect(out).not.toContain("generated/out.ts");
+  expect(out).toContain("git's ignore rules honoured");
+});
+
+test("a search that finds nothing widens past the ignore rules and labels the result", async () => {
+  const out = await grepFiles({ path: gitBase, pattern: "onlyInGenerated" });
+  expect(out).toContain("generated/out.ts");
+  expect(out).toContain("widened past git's ignore rules");
+});
+
+test("include_ignored reaches a gitignored file without needing the first pass to fail", async () => {
+  const out = await grepFiles({ path: gitBase, pattern: "needle", include_ignored: true });
+  expect(out).toContain("generated/out.ts");
+  expect(out).toContain("src/app.ts");
+  expect(out).toContain("ignore rules off");
+});
+
+test("a name that is nowhere still reports no results after both passes", async () => {
+  const out = await grepFiles({ path: gitBase, pattern: "definitelyAbsentToken" });
+  expect(out).toContain("(no results)");
+});
+
+// `--hidden` un-hides .git as readily as .github, and rg does not special-case it. Keeping .git in
+// IGNORED_DIRS is the only thing standing between a search and several hundred loose git objects,
+// on both passes.
+test(".git never leaks into results, at any width", async () => {
+  for (const params of [
+    { path: gitBase, pattern: "ref:" },
+    { path: gitBase, pattern: "ref:", include_ignored: true },
+  ]) {
+    const out = await grepFiles(params);
+    expect(out).not.toContain("/.git/");
+  }
+  const listing = await globFiles({ path: gitBase, include_ignored: true });
+  expect(listing).not.toContain("/.git/");
+});
+
+test("Glob lists hidden files and omits gitignored ones", async () => {
+  const out = await globFiles({ path: gitBase, pattern: "*.yml" });
+  expect(out).toContain(".github/ci.yml");
+  const all = await globFiles({ path: gitBase, pattern: "*.ts" });
+  expect(all).toContain("src/app.ts");
+  expect(all).not.toContain("generated/out.ts");
+});
+
+test("the directory map describes the same tree the search does", async () => {
+  const view = await gitIgnoreView(gitBase);
+  const tree = await buildTree(gitBase, 5, IGNORED_DIRS, view);
+  expect(tree).toContain(".github");
+  expect(tree).toContain("app.ts");
+  // The map used to advertise this file while no search could reach it — issue #22 itself.
+  expect(tree).not.toContain("out.ts");
+});
+
+// Without ripgrep, `grep -rn` honours neither .gitignore nor hidden-file rules, so the two backends
+// used to give different answers to the same question. The issue's "Not covered here" note.
+test("the grep backend filters the same way ripgrep does", async () => {
+  await withoutRipgrep(async () => {
+    const out = await grepFiles({ path: gitBase, pattern: "needle" });
+    expect(out).toContain("## Search (grep,");
+    expect(out).toContain(".github/ci.yml");
+    expect(out).not.toContain("generated/out.ts");
+    expect(out).toContain("git's ignore rules honoured");
+  });
+});
+
+test("the grep backend widens on an empty result too", async () => {
+  await withoutRipgrep(async () => {
+    const out = await grepFiles({ path: gitBase, pattern: "onlyInGenerated" });
+    expect(out).toContain("generated/out.ts");
+    expect(out).toContain("widened past git's ignore rules");
+  });
+});
+
+test("the Node walk backend filters the same way ripgrep does", async () => {
+  await withoutRipgrep(async () => {
+    const out = await globFiles({ path: gitBase, pattern: "*.ts" });
+    expect(out).toContain("src/app.ts");
+    expect(out).not.toContain("generated/out.ts");
+  });
+});
+
+test("context lines survive the grep filter without leaving orphan separators", async () => {
+  await withoutRipgrep(async () => {
+    const out = await grepFiles({ path: gitBase, pattern: "needle", "-C": 1 });
+    expect(out).toContain("src/app.ts");
+    expect(out).not.toContain("generated/out.ts");
+    // A "--" with nothing kept on one side of it is a block we dropped.
+    expect(out.split("\n").filter(Boolean).at(-1)).not.toBe("--");
+  });
 });

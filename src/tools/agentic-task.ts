@@ -1,4 +1,5 @@
 import { buildTree, IGNORED_DIRS } from "./explore-files.js";
+import { gitIgnoreView } from "./git-ignore.js";
 import { runAgentLoop, type AgentTool, type AgentRunResult, type DraftAnswerHook } from "../llm/agent-loop.js";
 import { resolveAgentConfig, resolveToolAgent, type LocallyConfig, type ResolvedAgentConfig } from "../config.js";
 import { assertWithinRoots, effectiveRoots } from "./sandbox.js";
@@ -143,7 +144,8 @@ export async function runAgenticTask(
   let userContent = task;
   const treeRoot = path ?? process.cwd();
   try {
-    const tree = await buildTree(treeRoot, 5, ignoreDirs);
+    // One listing for the whole map, so it describes the same tree Grep and Glob search.
+    const tree = await buildTree(treeRoot, 5, ignoreDirs, await gitIgnoreView(treeRoot));
     userContent = [
       `Starting point — the directory structure of ${treeRoot}:`,
       "",
