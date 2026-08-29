@@ -326,5 +326,5 @@ export function formatSymbolReport(report: SymbolReport): string {
   const verb = missing.length === 1 ? "does" : "do";
   const names = missing.map((c) => `\`${c.symbol}\``).join(", ");
 
-  return `_Symbols: ${label} — substring, case-insensitive, across every file under the allowed roots — **${missing.length} ${verb} not appear anywhere in the tree**: ${names}. Treat the claims naming them as unverified._`;
+  return `_Symbols: ${label}. This check is a substring match, case-insensitive, across every file under the allowed roots. **${missing.length} ${verb} not appear anywhere in the tree**: ${names}. Treat the claims that name them as unverified._`;
 }

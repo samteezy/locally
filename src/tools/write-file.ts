@@ -11,11 +11,11 @@ export const WRITE_FILE_SCHEMA: Record<string, unknown> = {
   properties: {
     path: {
       type: "string",
-      description: "Absolute path to the file to write",
+      description: "Absolute path of the file to write.",
     },
     content: {
       type: "string",
-      description: "Full content to write to the file",
+      description: "Full content to write to the file.",
     },
   },
   required: ["path", "content"],

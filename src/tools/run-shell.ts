@@ -34,16 +34,16 @@ export const RUN_SHELL_SCHEMA: Record<string, unknown> = {
   properties: {
     command: {
       type: "string",
-      description: `Executable to run. Must be one of: ${[...ALLOWED_COMMANDS].join(", ")}`,
+      description: `Program to run. It must be one of these: ${[...ALLOWED_COMMANDS].join(", ")}.`,
     },
     args: {
       type: "array",
       items: { type: "string" },
-      description: "Arguments to pass to the command",
+      description: "Arguments for the command.",
     },
     cwd: {
       type: "string",
-      description: "Working directory (defaults to process cwd)",
+      description: "Working directory. The default is the working directory of the process.",
     },
   },
   required: ["command", "args"],
@@ -53,20 +53,20 @@ export async function runShell(params: RunShellParams): Promise<string> {
   const { command, args, cwd } = params;
 
   if (!ALLOWED_COMMANDS.has(command)) {
-    return `Error: "${command}" is not allowed. Permitted commands: ${[...ALLOWED_COMMANDS].join(", ")}`;
+    return `Error: the command "${command}" is not allowed. Allowed commands: ${[...ALLOWED_COMMANDS].join(", ")}.`;
   }
 
   if (command === "git") {
     const sub = args[0] ?? "";
     if (!GIT_ALLOWED.has(sub)) {
-      return `Error: git subcommand "${sub}" is not allowed. Permitted: ${[...GIT_ALLOWED].join(", ")}`;
+      return `Error: the git subcommand "${sub}" is not allowed. Allowed subcommands: ${[...GIT_ALLOWED].join(", ")}.`;
     }
   }
 
   if (command === "npm") {
     const sub = args[0] ?? "";
     if (!NPM_ALLOWED.has(sub)) {
-      return `Error: npm subcommand "${sub}" is not allowed. Permitted: ${[...NPM_ALLOWED].join(", ")}`;
+      return `Error: the npm subcommand "${sub}" is not allowed. Allowed subcommands: ${[...NPM_ALLOWED].join(", ")}.`;
     }
   }
 

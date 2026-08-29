@@ -55,12 +55,12 @@ test("an answer that cited nothing is called out, not passed over in silence", (
   // told it named no location at all, which was false (issue #16).
   const report = formatCitationReport({ checks: [], named: 0 });
   expect(report).toContain("none parsed");
-  expect(report).toContain("nothing in this answer was checked");
+  expect(report).toContain("locally checked nothing in this answer");
   expect(report).not.toContain("names no path:line");
 });
 
 test("report confirms a clean set", () => {
-  expect(formatCitationReport({ checks: [{ citation: "a.ts:1", ok: true }], named: 1 })).toContain("all resolve");
+  expect(formatCitationReport({ checks: [{ citation: "a.ts:1", ok: true }], named: 1 })).toContain("Each one points to a real file and line");
 });
 
 test("report names each failure and warns the caller", () => {

@@ -18,15 +18,15 @@ export const READ_FILE_SCHEMA: Record<string, unknown> = {
   properties: {
     path: {
       type: "string",
-      description: "Absolute path to the file to read",
+      description: "Absolute path of the file to read.",
     },
     offset: {
       type: "number",
-      description: "Line number to start reading from (1-based, default: 1)",
+      description: "Line number to start at (1-based, default: 1).",
     },
     limit: {
       type: "number",
-      description: `Number of lines to read (default: up to ${MAX_LINES_DEFAULT})`,
+      description: `Number of lines to read (default: up to ${MAX_LINES_DEFAULT}).`,
     },
   },
   required: ["path"],

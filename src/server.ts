@@ -5,16 +5,21 @@ import { withUsageFooter, formatUsageReport } from "./usage.js";
 import { formatLocallyError } from "./llm/errors.js";
 import type { LocallyConfig } from "./config.js";
 
-const SERVER_INSTRUCTIONS = `locally is your assistant's assistant. It runs smaller models on local (or cheap) endpoints, so it costs little or nothing to use.
+const SERVER_INSTRUCTIONS = `locally is an assistant for your assistant. It runs small models on local or low-cost endpoints, so it costs little or nothing to use.
 
-Before doing low-stakes, repetitive, or mechanical work yourself, delegate it here to keep it off the frontier model:
-- Broad fan-out codebase searches — "where is X", how something works, naming-convention sweeps — the situations you'd otherwise spawn an Explore subagent for (explore_task). It returns a conclusion with file:line citations, not file dumps.
-- Locating and inventorying what a codebase contains — what exists, where it lives, what a cited line says (explore_task). It reports what the code does and where it is; code review, audits, severity ratings and design judgment stay with you.
-- Boilerplate, scaffolding, and routine edits (run_task)
+Send low-stakes, repetitive, or mechanical work here. This keeps the work off the frontier model.
 
-Each result ends with a one-line footer showing the model used and how many tokens were generated locally. The output comes from a smaller model — skim it before relying on it, and re-do anything that needs frontier-level judgment yourself.
+Use explore_task for these jobs:
+- Wide codebase searches: where a thing is, how something works, naming-convention sweeps.
+- Inventory of a codebase: what exists, where it is, what a cited line says.
 
-Call usage_report when you want the cumulative total of work offloaded to locally — e.g. when the user asks how much has been kept off the frontier model.`;
+explore_task returns a conclusion with file:line citations, not file dumps. It reports what the code does and where it is. Keep code review, audits, severity ratings, and design judgment for yourself.
+
+Use run_task for boilerplate, scaffolding, and routine edits.
+
+Each result ends with a one-line footer. The footer names the model and counts the tokens that the local model generated. A small model wrote the output. Read it before you rely on it, and do the parts that need frontier-level judgment again yourself.
+
+Use usage_report to get the total work sent to locally. For example, use it when the user asks how much work stayed off the frontier model.`;
 
 const TASK_INPUT_SCHEMA = {
   type: "object" as const,
@@ -26,25 +31,25 @@ const TASK_INPUT_SCHEMA = {
     path: {
       type: "string",
       description:
-        "Directory to pre-map as a starting point. The model gets this tree up front, but it is not a boundary — the model can search and read anywhere within the configured allowedRoots. Defaults to the working directory.",
+        "Directory to map as a starting point. The model gets this tree at the start. The tree is not a boundary: the model can search and read anywhere in the configured allowedRoots. The default is the working directory.",
     },
     system_prompt: {
       type: "string",
-      description: "Optional system prompt to set context",
+      description: "Optional system prompt that gives the model more context",
     },
     agent: {
       type: "string",
       description:
-        'Named agent from locally.config.json to use. Falls back to the tool-specific default in config.tools, then the global default.',
+        'Named agent from locally.config.json. If you do not set it, locally uses the tool default in config.tools, then the global default.',
     },
     max_tokens: {
       type: "number",
-      description: "Override max tokens for this call",
+      description: "Maximum tokens for this call. This value replaces the configured maximum.",
     },
     max_iterations: {
       type: "number",
       description:
-        "Maximum agentic loop iterations before forcing a final answer. Defaults to 10 for run_task, and to the breadth budget for explore_task (medium: 8, very thorough: 20).",
+        "Maximum loop iterations before the model must give a final answer. The default is 10 for run_task. For explore_task the default is the breadth budget (medium: 8, very thorough: 20).",
     },
   },
   required: ["task"],
@@ -57,13 +62,13 @@ const EXPLORE_INPUT_SCHEMA = {
     task: {
       type: "string",
       description:
-        "What to find, in natural language (e.g. \"where is the agentic loop and what handles result caching?\"). Ask for facts and locations — not for a review, a risk rating, or a recommendation.",
+        "What to find, in natural language. For example: \"where is the agentic loop and what handles result caching?\" Ask for facts and locations. Do not ask for a review, a risk rating, or a recommendation.",
     },
     breadth: {
       type: "string",
       enum: ["medium", "very thorough"],
       description:
-        "How widely to search. \"medium\" checks the most likely locations; \"very thorough\" sweeps multiple locations and naming conventions across the tree. Defaults to \"medium\".",
+        "How widely to search. \"medium\" searches the most likely locations. \"very thorough\" sweeps many locations and naming conventions across the tree. The default is \"medium\".",
     },
   },
   required: ["task"],
@@ -74,7 +79,7 @@ const EXPLORE_INPUT_SCHEMA = {
  * response's `_meta`, so server.test.ts asserts it against package.json rather than leaving it
  * to drift.
  */
-const SERVER_VERSION = "0.6.0";
+const SERVER_VERSION = "0.6.1";
 
 export function createServer(config: LocallyConfig): Server {
   const server = new Server(
@@ -107,7 +112,12 @@ export function createServer(config: LocallyConfig): Server {
           openWorldHint: false,
         },
         description:
-          "Read-only fan-out search over a codebase — the local-model equivalent of an Explore subagent. It greps with ripgrep and reads targeted excerpts, returning a conclusion with file:line citations rather than file dumps. Before the answer comes back the server checks it: citations are re-resolved against the filesystem, file paths and asserted names are existence-checked, and any file the answer describes without ever having opened is named. Strongest at inventory work — list, enumerate, locate, \"where is X\", naming-convention sweeps. Weaker at open-ended \"explain how this is wired\" architecture questions, so verify those. The path is a starting point, not a boundary. Set breadth (\"medium\" / \"very thorough\"). It reports what the code does and where it is; it is not for reviewing, auditing, rating, or recommending — ask it where and what, and keep whether and why on the frontier model.",
+          "Read-only search across a codebase with a local model. It is the local-model equivalent of an Explore subagent.\n\n" +
+          "It searches file contents with ripgrep and reads short excerpts. It returns a conclusion with file:line citations, not file dumps.\n\n" +
+          "The server checks the answer before it comes back. It resolves each citation against the filesystem again. It checks that each file path and each asserted name exists. It names each file that the answer describes but never opened.\n\n" +
+          "It is strongest at inventory work: list, enumerate, locate, \"where is X\", and naming-convention sweeps. It is weaker at open-ended \"explain how this is wired\" questions, so check those answers.\n\n" +
+          "The path is a starting point, not a boundary. Set breadth to \"medium\" or \"very thorough\".\n\n" +
+          "It reports what the code does and where it is. It is not for review, audits, ratings, or recommendations. Ask it where and what. Keep whether and why on the frontier model.",
         inputSchema: EXPLORE_INPUT_SCHEMA,
       },
       {
@@ -122,7 +132,11 @@ export function createServer(config: LocallyConfig): Server {
           openWorldHint: false,
         },
         description:
-          "Generate or edit content with a local model to keep low-stakes work off the frontier model. Good for drafting commit messages, PR descriptions, and changelog entries, plus boilerplate, scaffolding, and routine code edits. The model runs agentically: it receives a directory map (when path is provided) then reads and writes files as needed. Use for writing, editing, and implementing. It does the task it is given and stops: it will not explore beyond it, and does not volunteer a review, a critique, or a redesign of the code it touches — ask for any of those explicitly if you want them. Provide project-specific best practices in the task prompt, and review the output before relying on it.",
+          "Generate or edit content with a local model. Use it to keep low-stakes work off the frontier model.\n\n" +
+          "It is good for commit messages, PR descriptions, changelog entries, boilerplate, scaffolding, and routine code edits.\n\n" +
+          "The model works agentically. It gets a directory map when you give a path. Then it reads and writes files as necessary.\n\n" +
+          "Use it to write, edit, and implement. It does the task that you give it and then stops. It does not explore further, and it does not add a review, a critique, or a redesign of the code. If you want one of these, ask for it in the task.\n\n" +
+          "Put project-specific best practices in the task prompt. Read the output before you rely on it.",
         inputSchema: TASK_INPUT_SCHEMA,
       },
       {
@@ -135,7 +149,7 @@ export function createServer(config: LocallyConfig): Server {
           openWorldHint: false,
         },
         description:
-          "Report how much work has been offloaded to locally since the server started: number of tasks handled and tokens generated locally. Takes no arguments. Use when the user asks how much has been kept off the frontier model.",
+          "Report the work sent to locally since the server started. The report gives the number of tasks and the count of tokens generated locally. This tool takes no arguments. Use it when the user asks how much work stayed off the frontier model.",
         inputSchema: { type: "object" as const, properties: {} },
       },
     ],

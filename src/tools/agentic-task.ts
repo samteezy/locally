@@ -147,13 +147,13 @@ export async function runAgenticTask(
     // One listing for the whole map, so it describes the same tree Grep and Glob search.
     const tree = await buildTree(treeRoot, 5, ignoreDirs, await gitIgnoreView(treeRoot));
     userContent = [
-      `Starting point — the directory structure of ${treeRoot}:`,
+      `Starting point. This is the directory structure of ${treeRoot}:`,
       "",
       ".",
       tree,
       "",
-      `This map is where to start looking, not a boundary. You can search and read anywhere under: ${roots.join(", ")}.`,
-      "If the answer lives outside the map above, search for it there rather than inferring it.",
+      `This map is where to start, not a boundary. You can search and read anywhere under these directories: ${roots.join(", ")}.`,
+      "If the answer is outside this map, search for it there. Do not infer it.",
       "",
       "---",
       "",
@@ -188,7 +188,7 @@ export async function runAgenticTask(
               : undefined;
 
         if (requested === undefined) {
-          throw new Error(`"${fence.pathKey}" is required and must be an absolute path.`);
+          throw new Error(`The "${fence.pathKey}" parameter is necessary. It must be an absolute path.`);
         }
 
         const canonical = assertWithinRoots(requested, roots, { mustExist: fence.mustExist });
