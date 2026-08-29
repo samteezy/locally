@@ -280,7 +280,7 @@ export async function verifyCitations(
 export function formatCitationReport(report: CitationReport): string {
   const { checks, named } = report;
   if (checks.length === 0) {
-    return "_Citations: **none parsed** — no path:line, path:start-end, prose line reference, or File/Line table row was found, so nothing in this answer was checked against the filesystem._";
+    return "_Citations: **none parsed**. This answer has no path:line, no path:start-end, no prose line reference, and no File/Line table row. locally checked nothing in this answer against the filesystem._";
   }
 
   const bad = checks.filter((c) => !c.ok);
@@ -290,7 +290,7 @@ export function formatCitationReport(report: CitationReport): string {
       : `${checks.length} citation${checks.length === 1 ? "" : "s"} checked`;
 
   if (bad.length === 0) {
-    return `_Citations: ${label}, all resolve to a real file and line._`;
+    return `_Citations: ${label}. Each one points to a real file and line._`;
   }
 
   const missing = bad.filter((c) => c.reason === "file not found");
@@ -299,13 +299,13 @@ export function formatCitationReport(report: CitationReport): string {
   if (missing.length > 0) {
     const phrase =
       missing.length === 1 ? "1 names a file that does not exist" : `${missing.length} name files that do not exist`;
-    groups.push(`**${phrase}** — ${missing.map((c) => c.citation).join("; ")}`);
+    groups.push(`**${phrase}**: ${missing.map((c) => c.citation).join(", ")}.`);
   }
   if (outOfRange.length > 0) {
     const phrase =
       outOfRange.length === 1 ? "1 points past the end of its file" : `${outOfRange.length} point past the end of their file`;
-    groups.push(`**${phrase}** — ${outOfRange.map((c) => `${c.citation} (${c.reason})`).join("; ")}`);
+    groups.push(`**${phrase}**: ${outOfRange.map((c) => `${c.citation} (${c.reason})`).join(", ")}.`);
   }
 
-  return `_Citations: ${label}, ${groups.join(", and ")}. Treat the surrounding claims as unverified._`;
+  return `_Citations: ${label}. ${groups.join(" ")} Treat the claims around them as unverified._`;
 }

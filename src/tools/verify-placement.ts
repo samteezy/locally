@@ -297,11 +297,11 @@ export function formatPlacementReport(report: PlacementReport): string {
 
   if (wrong.length === 1) {
     const c = wrong[0];
-    return `_Placement: ${label}, **1 names a symbol that its cited file keeps elsewhere** — \`${c.symbol}\` is cited at \`${c.label}\`, but the nearest occurrence in that file is line ${c.nearestLine}. The file is right and the line is not; re-check it before trusting the claim._`;
+    return `_Placement: ${label}. **1 names a symbol that its cited file keeps elsewhere**: \`${c.symbol}\` is cited at \`${c.label}\`, but the nearest occurrence in that file is line ${c.nearestLine}. The file is right and the line is not. Check the line again before you trust the claim._`;
   }
 
   const misses = wrong
-    .map((c) => `\`${c.symbol}\` cited at \`${c.label}\`, nearest occurrence line ${c.nearestLine}`)
-    .join("; ");
-  return `_Placement: ${label}, **${wrong.length} name symbols their cited files keep elsewhere** — ${misses}. The files are right and the lines are not; re-check them before trusting the claims._`;
+    .map((c) => `\`${c.symbol}\` (cited at \`${c.label}\`, nearest occurrence line ${c.nearestLine})`)
+    .join(", ");
+  return `_Placement: ${label}. **${wrong.length} name symbols their cited files keep elsewhere**: ${misses}. The files are right and the lines are not. Check the lines again before you trust the claims._`;
 }

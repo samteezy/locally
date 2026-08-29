@@ -60,7 +60,7 @@ export function assertBindSafety(host: string, token: string | undefined): void 
       category: "config",
       origin: "local",
       retriable: false,
-      fix: `Set transport.authToken (or LOCALLY_AUTH_TOKEN in the server's environment) to require a bearer token on /mcp, or bind 127.0.0.1 to keep the server on this machine.`,
+      fix: `Set transport.authToken, or LOCALLY_AUTH_TOKEN in the environment of the server, to require a bearer token on /mcp. You can also bind 127.0.0.1 to keep the server on this machine.`,
     }
   );
 }

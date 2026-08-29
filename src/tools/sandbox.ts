@@ -41,7 +41,7 @@ export function resolveRoots(roots: string[]): string[] {
         category: "config",
         origin: "local",
         retriable: false,
-        fix: "set allowedRoots in locally.config.json to existing directories (or remove it to default to the launch directory), then reconnect the server.",
+        fix: "set allowedRoots in locally.config.json to directories that exist. Remove the field to use the launch directory. Then reconnect the server.",
       }
     );
   }
@@ -93,7 +93,7 @@ export function assertWithinRoots(
         category: "constraint",
         origin: "local",
         retriable: false,
-        fix: "use a path inside one of the allowed roots, or add the directory to allowedRoots in locally.config.json and reconnect the server.",
+        fix: "use a path inside one of the allowed roots. You can also add the directory to allowedRoots in locally.config.json and then reconnect the server.",
       }
     );
   }

@@ -34,7 +34,7 @@ test("confirms citations that resolve", async () => {
   answerWith("The handler is at src/app.ts:4.");
   const result = await exploreTask(config, { task: "where is the handler?", path: base });
   expect(result.text).toContain("1 citation checked");
-  expect(result.text).toContain("all resolve");
+  expect(result.text).toContain("Each one points to a real file and line");
 });
 
 test("flags a citation to a file that does not exist", async () => {
@@ -145,12 +145,12 @@ test("the prompt asks the model to separate what it read from what it inferred",
   // answer nobody had checked. A tier that only ever admits doubt cannot be blanket-applied.
   expect(system).toContain("LIKELY:");
   expect(system).not.toContain("CONFIRMED");
-  expect(system).toContain("never rate the answer as a whole");
-  expect(system).toContain("may be incomplete");
+  expect(system).toContain("Never rate the answer as a whole");
+  expect(system).toContain("can be incomplete");
   // A right list of tables generated a wrong list of one-schema-file-per-table (issue #16), so the
   // prompt names that specific move rather than repeating the general "do not describe what you
   // did not read" rule.
-  expect(system).toContain("Before naming a SET of files");
+  expect(system).toContain("Before you name a SET of files");
 });
 
 test("the prompt bars verdicts and makes the model name the half it left out", async () => {
@@ -192,7 +192,7 @@ test("a very thorough run that ends immediately is marked a shallow sweep", asyn
   expect(result.text).toContain("Shallow sweep");
   // Two iterations, not one: it was asked to keep sweeping and repeated its answer instead.
   expect(result.text).toContain("2 iterations");
-  expect(result.text).toContain("asked to keep sweeping");
+  expect(result.text).toContain("asked it to sweep more");
 });
 
 test("medium breadth gets no shallow-sweep note", async () => {
@@ -223,7 +223,7 @@ test("the seeded prompt frames the tree as a starting point and names the real f
   expect(user).toContain(base);
 
   const system = body.messages.find((m: { role: string }) => m.role === "system").content;
-  expect(system).toContain("Never state what a file contains unless you read it");
+  expect(system).toContain("Never state what a file contains unless you read the file");
 });
 
 // --- breadth shapes the loop ---------------------------------------------------
@@ -255,7 +255,7 @@ test("a thin very-thorough run is asked to keep sweeping", async () => {
   const nudge = lastBody.messages[lastBody.messages.length - 1];
   expect(nudge.role).toBe("user");
   expect(nudge.content).toContain("not yet a thorough sweep");
-  expect(nudge.content).toContain("do not pad it");
+  expect(nudge.content).toContain("Do not pad it");
   expect(result.nudged).toBe(true);
 });
 
@@ -288,7 +288,7 @@ test("names real files the run described without opening", async () => {
   answerWith("The handler is at src/app.ts:4.");
   const result = await exploreTask(config, { task: "q", path: base });
   expect(result.text).toContain("Coverage:");
-  expect(result.text).toContain("Described without being looked at: `src/app.ts`");
+  expect(result.text).toContain("Described but never looked at: `src/app.ts`");
 });
 
 test("says nothing when every named file was read", async () => {
@@ -389,7 +389,7 @@ test("a listing does not license a claim about a line's contents", async () => {
     { content: "The handler is at src/app.ts:4, in `app.ts`." },
   ]);
   const result = await exploreTask(config, { task: "q", path: base });
-  expect(result.text).toContain("Described without being looked at: `src/app.ts`");
+  expect(result.text).toContain("Described but never looked at: `src/app.ts`");
 });
 
 // --- the iteration budget --------------------------------------------------------
@@ -438,7 +438,7 @@ test("a citations block is verified and comes back as ordinary markdown", async 
   expect(result.text).toContain("- `src/app.ts:4` — the handler");
   expect(result.text).not.toContain("<citations>");
   expect(result.text).toContain("1 citation checked");
-  expect(result.text).toContain("all resolve");
+  expect(result.text).toContain("Each one points to a real file and line");
 });
 
 test("a citations block naming a file that does not exist is still caught", async () => {

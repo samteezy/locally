@@ -224,7 +224,7 @@ test("report says so when the cap truncated the list", () => {
 
 test("report names the search it ran", () => {
   const report = formatSymbolReport({ checks: [{ symbol: "made_up_table", found: false }], named: 1 });
-  expect(report).toContain("substring, case-insensitive");
+  expect(report).toContain("substring match, case-insensitive");
 });
 
 test("report reads correctly for a single miss", () => {

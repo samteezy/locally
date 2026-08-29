@@ -146,7 +146,7 @@ test("names every missing file", () => {
   expect(out).toContain("3 file paths checked");
   expect(out).toContain("**2 do not exist anywhere in the tree**");
   expect(out).toContain("`chunk.ts`, `document.ts`");
-  expect(out).toContain("Treat the claims describing them as invented");
+  expect(out).toContain("Treat the claims that describe them as invented");
 });
 
 test("says so when the cap truncated the list", () => {

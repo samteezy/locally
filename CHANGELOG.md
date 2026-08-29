@@ -7,6 +7,42 @@ fixes. "Breaking" below distinguishes the **MCP surface** (`explore_task`, `run_
 `usage_report` — what a client calls) from the **agent-loop surface** (the tools the local
 model is handed inside a run). The two break independently, and only the first affects callers.
 
+## [0.6.1] — 2026-08-29
+
+Rewrite every instruction, description, and report line in Simplified Technical English.
+
+All the text that a model reads was written like architecture prose: long sentences, em-dash
+asides, semicolons, and soft modals. A frontier model can read that. The 9B model at the other
+end of `explore_task` reads the same text, and "may be incomplete" is not an instruction to a
+small model. "Can be incomplete" is. This release applies the rules of ASD-STE100 Simplified
+Technical English to that text. No schema, tool, or behavior changes.
+
+### Changed
+- **The MCP surface.** The server instructions, the three tool descriptions, and every
+  input-schema field are now short sentences with one fact in each. The `explore_task`
+  description held six unrelated facts in one 130-word paragraph, and the rule that matters most
+  ("not for review, audits, ratings") sat at the end after a semicolon. Each fact is now its own
+  sentence.
+- **The `explore_task` contract.** The system prompt, the breadth guidance, the sweep nudge, the
+  shallow-sweep note, and the coverage note. Every rule is one imperative sentence. `may` and
+  `should` are gone, because a small model reads them as optional. The deliberate signals stay
+  exact: `LIKELY:`, the capitalized `SET`, and the `<citations>` block format.
+- **The agent-loop tools.** The descriptions of `Grep`, `Glob`, `Read`, `write_file`,
+  `patch_file`, and `run_shell`, plus every parameter description behind them.
+- **The verification footers.** The citation, symbol, file-path, and placement reports. Each one
+  now ends with a plain instruction to the caller ("Check the line again before you trust the
+  claim") instead of a semicolon-joined clause.
+- **The error text.** Every `Fix:` line, and the `run_shell` allowlist rejections.
+- **One word, one meaning.** This repository now says `check` (not verify, confirm, or ensure)
+  and `config` (not configuration or settings) everywhere in model-facing text.
+
+### Not changed
+- `README.md`. Its voice needs more nuance than a mechanical pass gives it.
+- The doc comments in the source. They explain a decision to a person who reads the code, which
+  is a different job from instructing a model.
+- Behavior. The test suite is the evidence: the assertions that pinned the old wording were
+  updated to the new wording, and nothing else moved.
+
 ## [0.6.0] — 2026-08-29
 
 Put a lock on the HTTP transport (issue #4).

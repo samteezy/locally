@@ -74,7 +74,7 @@ export async function runCompletionWithTools(
       category: "config",
       origin: "local",
       retriable: false,
-      fix: "set a model via LOCALLY_MODEL or the \"model\" field in locally.config.json, then reconnect the locally MCP server (config is read once at startup).",
+      fix: "set a model in LOCALLY_MODEL or in the \"model\" field of locally.config.json. Then reconnect the locally MCP server, because it reads the config only at startup.",
     });
   }
 
@@ -142,14 +142,14 @@ export async function runCompletionWithTools(
           category: "cancelled",
           origin: "local",
           retriable: true,
-          fix: "nothing to fix — re-run the task if the cancellation was not intended.",
+          fix: "nothing to fix. If you did not intend to cancel, run the task again.",
         });
       }
       throw new LocallyError(`LLM request timed out after ${timeoutSecs}s.`, {
         category: "timeout",
         origin: "local",
         retriable: true,
-        fix: "raise \"timeout\" (seconds) in locally.config.json, then reconnect the locally MCP server (config is read once at startup). Or pass a smaller task / lower max_iterations.",
+        fix: "increase \"timeout\" (in seconds) in locally.config.json. Then reconnect the locally MCP server, because it reads the config only at startup. You can also send a smaller task or a lower max_iterations.",
       });
     }
     throw new LocallyError(
@@ -158,7 +158,7 @@ export async function runCompletionWithTools(
         category: "upstream",
         origin: "upstream",
         retriable: true,
-        fix: `verify the model endpoint at ${url} is running and reachable — this is the endpoint, not locally.`,
+        fix: `make sure that the model endpoint at ${url} runs and accepts connections. The endpoint failed here, not locally.`,
       }
     );
   } finally {
@@ -171,7 +171,7 @@ export async function runCompletionWithTools(
         category: "config",
         origin: "local",
         retriable: false,
-        fix: "check your API key in locally.config.json (\"apiKey\") or the LOCALLY_API_KEY env var, then reconnect the locally MCP server.",
+        fix: "check the API key in the \"apiKey\" field of locally.config.json or in the LOCALLY_API_KEY environment variable. Then reconnect the locally MCP server.",
       });
     }
     const text = await response.text().catch(() => "");
@@ -195,7 +195,7 @@ export async function runCompletionWithTools(
       category: "upstream",
       origin: "upstream",
       retriable: false,
-      fix: "the endpoint returned a response that is not OpenAI chat-completions shaped — verify baseUrl points at an OpenAI-compatible /v1 endpoint.",
+      fix: "the endpoint returned a response that is not in the OpenAI chat-completions shape. Make sure that baseUrl points at an OpenAI-compatible /v1 endpoint.",
     });
   }
 

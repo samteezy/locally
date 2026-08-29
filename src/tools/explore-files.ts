@@ -382,41 +382,41 @@ export const GREP_SCHEMA: Record<string, unknown> = {
   properties: {
     pattern: {
       type: "string",
-      description: "Regular expression to search file contents for. Returns matching lines as path:line:text.",
+      description: "Regular expression to search file contents with. The tool returns matching lines as path:line:text.",
     },
     path: {
       type: "string",
-      description: "Directory or file to search in. Defaults to the directory the task was mapped at.",
+      description: "Directory or file to search in. The default is the directory that the task was mapped at.",
     },
     glob: {
       type: "string",
-      description: 'Restrict the search to files matching this glob, e.g. "*.ts" or "src/**/*.tsx"',
+      description: 'Search only the files that match this glob, such as "*.ts" or "src/**/*.tsx".',
     },
     "-i": {
       type: "boolean",
-      description: "Case-insensitive search (default: false)",
+      description: "Ignore letter case in the search (default: false).",
     },
     "-C": {
       type: "number",
-      description: `Lines of context to show around each match (default: 0, max: ${MAX_CONTEXT_LINES})`,
+      description: `Lines of context to show around each match (default: 0, maximum: ${MAX_CONTEXT_LINES}).`,
     },
     max_results: {
       type: "number",
-      description: `Maximum matching lines to return (default: ${MAX_RESULTS_DEFAULT})`,
+      description: `Maximum number of matching lines to return (default: ${MAX_RESULTS_DEFAULT}).`,
     },
     max_matches_per_file: {
       type: "number",
-      description: 'Maximum matches per file. Useful for "which files mention X" sweeps (e.g. 1).',
+      description: 'Maximum number of matches for each file. Set it to 1 for a "which files mention X" sweep.',
     },
     ignore_patterns: {
       type: "array",
       items: { type: "string" },
-      description: "Additional directory names or globs to ignore",
+      description: "More directory names or globs to ignore.",
     },
     include_ignored: {
       type: "boolean",
       description:
-        "Also search files git ignores \u2014 build output, local config, vendored code. Off by default; a search that finds nothing is retried with this on automatically.",
+        "Also search the files that git ignores, such as build output, local config, and vendored code. Off by default. If a search finds nothing, locally runs it again with this option on.",
     },
   },
   required: ["pattern"],
@@ -427,33 +427,33 @@ export const GLOB_SCHEMA: Record<string, unknown> = {
   properties: {
     pattern: {
       type: "string",
-      description: 'Glob to match file paths against, e.g. "*.ts" or "src/**/*.tsx". Omit to list every file under path.',
+      description: 'Glob to match file paths against, such as "*.ts" or "src/**/*.tsx". Omit it to list every file under path.',
     },
     path: {
       type: "string",
-      description: "Directory to search in. Defaults to the directory the task was mapped at.",
+      description: "Directory to search in. The default is the directory that the task was mapped at.",
     },
     max_files: {
       type: "number",
-      description: `Maximum files to list (default: ${MAX_FILES_DEFAULT})`,
+      description: `Maximum number of files to list (default: ${MAX_FILES_DEFAULT}).`,
     },
     max_depth: {
       type: "number",
-      description: "Max directory depth to traverse when ripgrep is unavailable (default: 5)",
+      description: "Maximum directory depth to go into when ripgrep is not available (default: 5).",
     },
     max_file_size_kb: {
       type: "number",
-      description: "Skip counting lines for files larger than this many KB (default: 100)",
+      description: "Do not count the lines of a file that is larger than this many KB (default: 100).",
     },
     ignore_patterns: {
       type: "array",
       items: { type: "string" },
-      description: "Additional directory names or globs to ignore",
+      description: "More directory names or globs to ignore.",
     },
     include_ignored: {
       type: "boolean",
       description:
-        "Also search files git ignores \u2014 build output, local config, vendored code. Off by default; a search that finds nothing is retried with this on automatically.",
+        "Also search the files that git ignores, such as build output, local config, and vendored code. Off by default. If a search finds nothing, locally runs it again with this option on.",
     },
   },
   required: [],

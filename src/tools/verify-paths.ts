@@ -149,5 +149,5 @@ export function formatPathReport(report: PathReport): string {
   const verb = missing.length === 1 ? "does" : "do";
   const names = missing.map((c) => `\`${c.path}\``).join(", ");
 
-  return `_Files: ${label}, **${missing.length} ${verb} not exist anywhere in the tree** — ${names}. Treat the claims describing them as invented._`;
+  return `_Files: ${label}. **${missing.length} ${verb} not exist anywhere in the tree**: ${names}. Treat the claims that describe them as invented._`;
 }

@@ -86,7 +86,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       function: {
         name: "Grep",
         description:
-          "Search file contents with ripgrep (or grep) and get back matching lines as path:line:text. This is your primary tool — prefer several narrow searches over one broad sweep. Files git ignores are skipped; the result header says which filter ran.",
+          "Search file contents with ripgrep or grep. It returns matching lines as path:line:text. This is your primary tool. Several narrow searches are better than one broad sweep. Grep skips the files that git ignores. The result header names the filter that ran.",
         parameters: GREP_SCHEMA,
       },
     },
@@ -99,7 +99,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       function: {
         name: "Glob",
         description:
-          "Find files by name pattern (e.g. \"*.ts\", \"src/**/*.tsx\") and get back their paths, line counts and sizes. Use this to see what exists before deciding what to open — never to guess a filename from a convention. Files git ignores are skipped; the result header says which filter ran.",
+          "Find files by a name pattern such as \"*.ts\" or \"src/**/*.tsx\". It returns their paths, line counts, and sizes. Use it to see which files exist before you decide what to open. Never guess a filename from a convention. Glob skips the files that git ignores. The result header names the filter that ran.",
         parameters: GLOB_SCHEMA,
       },
     },
@@ -112,7 +112,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       function: {
         name: "Read",
         description:
-          "Read a file by absolute path. Output is line-numbered, so cite the numbers you see rather than counting. Pass offset and limit to read just the range you need.",
+          "Read a file at an absolute path. The output is line-numbered, so cite the numbers that you see instead of a count of your own. Pass offset and limit to read only the range that you need.",
         parameters: READ_FILE_SCHEMA,
       },
     },
@@ -129,7 +129,7 @@ export const RUN_AGENT_TOOLS: AgentTool[] = [
       function: {
         name: "write_file",
         description:
-          "Write content to a file at the given absolute path, creating parent directories as needed. Use this to create or overwrite files.",
+          "Write content to a file at an absolute path. It makes the parent directories as necessary. Use it to create a file or to overwrite one.",
         parameters: WRITE_FILE_SCHEMA,
       },
     },
@@ -142,7 +142,7 @@ export const RUN_AGENT_TOOLS: AgentTool[] = [
       function: {
         name: "patch_file",
         description:
-          "Replace an exact string in a file. Prefer this over write_file for targeted edits — safer than rewriting the whole file.",
+          "Replace an exact string in a file. Use this tool instead of write_file for a small edit. It is safer than a rewrite of the whole file.",
         parameters: PATCH_FILE_SCHEMA,
       },
     },
@@ -155,7 +155,7 @@ export const RUN_AGENT_TOOLS: AgentTool[] = [
       function: {
         name: "run_shell",
         description:
-          "Run a nondestructive shell command from the allowlist. Use to check compilation errors, run tests, inspect git state, or verify output.",
+          "Run one nondestructive shell command from the allowlist. Use it to find compilation errors, run tests, look at git state, or check output.",
         parameters: RUN_SHELL_SCHEMA,
       },
     },
@@ -281,7 +281,7 @@ export async function runAgentLoop(
       category: "cancelled",
       origin: "local",
       retriable: true,
-      fix: "nothing to fix — re-run the task if the cancellation was not intended.",
+      fix: "nothing to fix. If you did not intend to cancel, run the task again.",
     });
   };
 
@@ -369,7 +369,7 @@ export async function runAgentLoop(
         category: "constraint",
         origin: "local",
         retriable: true,
-        fix: "raise \"max_iterations\" on the call, or narrow the task so the model finishes sooner.",
+        fix: "increase \"max_iterations\" on the call, or make the task narrower so the model finishes sooner.",
       }
     );
   }

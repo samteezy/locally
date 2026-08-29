@@ -107,6 +107,34 @@ For codebase Q&A, "where is X", how-something-works, and naming-convention sweep
 
 When adding or updating functionality, before committing, check that the README is still accurate and doesn't need updating.
 
+### Write it in Simplified Technical English
+
+Every prompt, every changelog entry, and all technical documentation is written in Simplified
+Technical English (ASD-STE100). Use the `simple-english` skill for this. It applies to:
+
+- Model-facing text: the `explore_task` contract, the tool and parameter descriptions, and the
+  server instructions.
+- Caller-facing text: the verification footers, the `Fix:` lines on `LocallyError`, and the
+  `run_shell` rejection messages.
+- `CHANGELOG.md` and the technical documentation.
+
+Source-code comments are exempt. They explain a decision to a person who reads the code, which is
+a different job from instructing a model, and this file is full of them on purpose.
+
+The rules that carry the most weight here:
+
+- One word, one meaning. This repository says `check` (never verify, confirm, or ensure) and
+  `config` (never configuration or settings).
+- 20 words for an instruction, 25 for a description. One instruction per sentence.
+- `can` and `must` only. Never `may`, `should`, `might`, or `could` — a small model reads
+  "should" as optional, which is how "may be incomplete" stopped being an instruction.
+- Active voice. Put the condition before the command. No semicolons, no `e.g.`, no `etc.`
+- Never change a fact to make a sentence shorter. Code, identifiers, paths, quoted errors, and
+  deliberate signals (`LIKELY:`, the capitalized `SET`, the `<citations>` block) stay exact.
+
+The prompt tests pin phrases from this text, so a rewrite that drops a rule fails the suite
+(`src/tools/explore-task.test.ts`). The 0.6.1 entry in `CHANGELOG.md` records the first pass.
+
 Before committing new work, ask the user whether to bump the version — don't decide it silently. If they say yes, bump `package.json` (via `npm version <x.y.z> --no-git-tag-version`, which updates `package-lock.json` too), update `SERVER_VERSION` in `src/server.ts` to match, and add a `CHANGELOG.md` entry. `src/server.test.ts` asserts the wire `serverInfo` against `package.json`, so a missed `SERVER_VERSION` fails the suite rather than drifting. Pre-1.0, breaking changes take the minor slot — note which surface broke, the MCP one (what a client calls) or the agent-loop one (the tools the local model is handed).
 
 ## Evals
