@@ -2,13 +2,24 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative, extname, isAbsolute, basename } from "node:path";
+import { gitIgnoreView, viewDenies, type GitIgnoreView } from "./git-ignore.js";
 
 const execFileAsync = promisify(execFile);
 
-export const IGNORED_DIRS = new Set([
-  "node_modules", ".git", "dist", "build", ".next", ".nuxt",
-  "__pycache__", ".cache", ".turbo", "coverage", ".nyc_output",
-]);
+/**
+ * The backstop for when git cannot answer — outside a repository, or with git off PATH.
+ *
+ * It used to carry eleven names, and it was the whole ignore policy. That only ever described the
+ * JavaScript ecosystem: `dist`, `.next`, `.turbo`, `.nyc_output` were in it while `target/`,
+ * `.venv/`, `vendor/`, `Pods/` were not, so a Rust or Python repo searched its own build output and
+ * nobody could fix it without editing this line. `git-ignore.ts` now owns the policy, and a
+ * repository's own `.gitignore` covers every one of the nine names dropped from here. These two
+ * stay because they have to hold when there is no repository to ask: `.git` must never be walked,
+ * and `node_modules` is the one directory that drowns a walk on its own.
+ *
+ * Config `ignorePatterns` still merges on top of this (`agentic-task.ts`).
+ */
+export const IGNORED_DIRS = new Set(["node_modules", ".git"]);
 
 const BINARY_EXTENSIONS = new Set([
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico",
@@ -87,10 +98,18 @@ export function rgIgnoreArgs(ignore: Iterable<string>): string[] {
  * tool and fatal in a checker: it is what let `verify-symbols` report a name defined in a
  * gitignored or dot-directory file as appearing nowhere in the tree (issue #17).
  *
- * Only verification uses these. The model's own `Grep`/`Glob` keep ripgrep's defaults, where
- * skipping build output and vendored code is a feature rather than a lie.
+ * The checkers use these for every pass past the first, because a checker's universe has to be
+ * whatever `Read` can open, which is everything.
+ *
+ * `Grep`/`Glob` now use `--hidden` unconditionally — `.github/`, `.claude/`, `.circleci/` and root
+ * dotfiles are ordinary source, and skipping them was never defensible — and reach for
+ * `--no-ignore` only as a second pass, when the first found nothing at all (issue #22). Their
+ * default filter is `git-ignore.ts`, not this.
  */
 export const UNFILTERED_RG_ARGS = ["--hidden", "--no-ignore"];
+
+/** What `Grep`/`Glob` search on the first pass: hidden files included, ignored files still out. */
+const HIDDEN_RG_ARG = "--hidden";
 
 export function grepIgnoreArgs(ignore: Iterable<string>): string[] {
   const args: string[] = [];
@@ -111,12 +130,22 @@ function capResults(output: string, maxResults: number): string {
   return `${kept}\n… ${dropped} more matching line${dropped === 1 ? "" : "s"} not shown — narrow the query or set file_pattern.`;
 }
 
+/**
+ * The directory map injected into the task prompt.
+ *
+ * `view` is what git can see under the root, or null when git cannot answer. It is the reason the
+ * map and the model's `Grep`/`Glob` finally describe the same tree: before issue #22 this walked
+ * the filesystem at `IGNORED_DIRS` while ripgrep filtered at `.gitignore`, so the map advertised
+ * files that no search could reach and the model had no way to tell.
+ */
 export async function buildTree(
   dirPath: string,
   maxDepth: number,
   ignoreDirs: Set<string>,
+  view: GitIgnoreView | null = null,
   depth = 0,
-  prefix = ""
+  prefix = "",
+  rel = ""
 ): Promise<string> {
   if (depth >= maxDepth) return "";
 
@@ -128,7 +157,11 @@ export async function buildTree(
   }
 
   const visible = entries
-    .filter((e) => !(e.isDirectory() && ignoreDirs.has(e.name)))
+    .filter((e) => {
+      const childRel = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory() && ignoreDirs.has(e.name)) return false;
+      return !viewDenies(view, childRel);
+    })
     .sort(sortEntries);
 
   const lines: string[] = [];
@@ -145,8 +178,10 @@ export async function buildTree(
         join(dirPath, entry.name),
         maxDepth,
         ignoreDirs,
+        view,
         depth + 1,
-        prefix + childPrefix
+        prefix + childPrefix,
+        rel ? `${rel}/${entry.name}` : entry.name
       );
       if (subtree) lines.push(subtree);
     }
@@ -195,7 +230,7 @@ async function listFilesWithRg(
   // Ignores go last: ripgrep resolves overlapping globs by last-match-wins, so a positive
   // `--glob alpha.ts` placed after `--glob !**/node_modules/**` would pull vendored files back in.
   const args = ["--files"];
-  if (unfiltered) args.push(...UNFILTERED_RG_ARGS);
+  args.push(...(unfiltered ? UNFILTERED_RG_ARGS : [HIDDEN_RG_ARG]));
   if (filePattern) args.push("--glob", filePattern);
   args.push(...rgIgnoreArgs(ignore), dirPath);
   try {
@@ -250,6 +285,10 @@ export async function listAllFiles(dirPath: string, maxFiles: number): Promise<s
   return walkFiles(dirPath, Number.MAX_SAFE_INTEGER, undefined, IGNORED_DIRS, maxFiles);
 }
 
+/**
+ * `view` is optional and defaults to null, which admits everything. `listAllFiles` relies on that:
+ * the checkers' universe has to stay wider than the model's.
+ */
 async function walkFiles(
   dirPath: string,
   maxDepth: number,
@@ -257,7 +296,9 @@ async function walkFiles(
   ignoreDirs: Set<string>,
   maxFiles: number,
   found: string[] = [],
-  depth = 0
+  depth = 0,
+  view: GitIgnoreView | null = null,
+  rel = ""
 ): Promise<string[]> {
   if (depth >= maxDepth || found.length >= maxFiles) return found;
 
@@ -271,13 +312,19 @@ async function walkFiles(
   for (const entry of entries.sort(sortEntries)) {
     if (found.length >= maxFiles) break;
     const fullPath = join(dirPath, entry.name);
+    const childRel = rel ? `${rel}/${entry.name}` : entry.name;
 
     if (entry.isDirectory()) {
       if (ignoreDirs.has(entry.name)) continue;
-      await walkFiles(fullPath, maxDepth, filePattern, ignoreDirs, maxFiles, found, depth + 1);
+      // Prune here rather than filtering afterwards, so a 40k-file .venv/ is never walked at all.
+      if (viewDenies(view, childRel)) continue;
+      await walkFiles(
+        fullPath, maxDepth, filePattern, ignoreDirs, maxFiles, found, depth + 1, view, childRel
+      );
     } else if (entry.isFile()) {
       if (BINARY_EXTENSIONS.has(extname(entry.name).toLowerCase())) continue;
       if (!matchesPattern(entry.name, filePattern)) continue;
+      if (viewDenies(view, childRel)) continue;
       found.push(fullPath);
     }
   }
@@ -316,6 +363,7 @@ export interface GrepParams {
   max_results?: number;
   max_matches_per_file?: number;
   ignore_patterns?: string[];
+  include_ignored?: boolean;
 }
 
 export interface GlobParams {
@@ -326,6 +374,7 @@ export interface GlobParams {
   max_depth?: number;
   max_file_size_kb?: number;
   ignore_patterns?: string[];
+  include_ignored?: boolean;
 }
 
 export const GREP_SCHEMA: Record<string, unknown> = {
@@ -364,6 +413,11 @@ export const GREP_SCHEMA: Record<string, unknown> = {
       items: { type: "string" },
       description: "Additional directory names or globs to ignore",
     },
+    include_ignored: {
+      type: "boolean",
+      description:
+        "Also search files git ignores \u2014 build output, local config, vendored code. Off by default; a search that finds nothing is retried with this on automatically.",
+    },
   },
   required: ["pattern"],
 };
@@ -396,9 +450,40 @@ export const GLOB_SCHEMA: Record<string, unknown> = {
       items: { type: "string" },
       description: "Additional directory names or globs to ignore",
     },
+    include_ignored: {
+      type: "boolean",
+      description:
+        "Also search files git ignores \u2014 build output, local config, vendored code. Off by default; a search that finds nothing is retried with this on automatically.",
+    },
   },
   required: [],
 };
+
+/**
+ * The second pass runs with no ignore rules at all, so it can reach build output. It is only ever
+ * shown when the first pass found nothing, and it is capped hard: this is a "here is where the name
+ * actually lives" hint, not a result set.
+ */
+const WIDENED_CAP = 20;
+
+/**
+ * Which filter produced this result — the difference between "nothing is there" and "nothing I can
+ * see". Without this line a model reading a short listing has no way to tell the two apart, and
+ * the explore contract tells it to build file lists out of exactly these listings (issue #22).
+ */
+function filterLabel(state: {
+  wide: boolean;
+  widened: boolean;
+  view: GitIgnoreView | null;
+}): string {
+  if (state.widened) return "widened past git's ignore rules — nothing matched without them";
+  if (state.wide) return "ignore rules off";
+  // A view means there is a repository to ask. ripgrep applies its rules itself and the Node/grep
+  // paths apply them from the view, but neither has anything to apply without one — and claiming a
+  // filter that did not run is the one thing this line must never do.
+  if (state.view) return "git's ignore rules honoured";
+  return "no ignore filter — not a git repository";
+}
 
 function mergedIgnores(extra: string[] | undefined): Set<string> {
   const merged = new Set<string>(IGNORED_DIRS);
@@ -433,8 +518,23 @@ export async function globFiles(params: GlobParams): Promise<string> {
   await assertDirectory(dirPath);
 
   const fileCap = max_files ?? MAX_FILES_DEFAULT;
-  const viaRg = (await hasRipgrep()) ? await listFilesWithRg(dirPath, pattern, ignore, fileCap) : null;
-  const paths = viaRg ?? (await walkFiles(dirPath, max_depth, pattern, ignore, fileCap));
+  const wide = params.include_ignored === true;
+  const view = wide ? null : await gitIgnoreView(dirPath);
+  const useRg = await hasRipgrep();
+
+  const listOnce = async (unfiltered: boolean, cap: number): Promise<string[]> => {
+    if (useRg) return (await listFilesWithRg(dirPath, pattern, ignore, cap, unfiltered)) ?? [];
+    return walkFiles(dirPath, max_depth, pattern, ignore, cap, [], 0, unfiltered ? null : view);
+  };
+
+  let paths = await listOnce(wide, fileCap);
+  // An empty listing is not an answer, only a filtered one. Widening past the ignore rules here is
+  // what stops "Glob found nothing" from reading as "there is nothing there" (issue #22).
+  let widened = false;
+  if (paths.length === 0 && !wide) {
+    paths = await listOnce(true, WIDENED_CAP);
+    widened = paths.length > 0;
+  }
 
   const entries: FileEntry[] = [];
   for (const p of paths) {
@@ -443,13 +543,16 @@ export async function globFiles(params: GlobParams): Promise<string> {
     if (entry) entries.push(entry);
   }
 
+  const filter = filterLabel({ wide, widened, view });
   const what = pattern ? `"${pattern}" in ${dirPath}` : dirPath;
-  if (entries.length === 0) return `## Files: ${what}\n\n(no files found matching criteria)`;
+  if (entries.length === 0) {
+    return `## Files: ${what} (${filter})\n\n(no files found matching criteria)`;
+  }
 
   const truncated = entries.length >= fileCap;
   const header = truncated
-    ? `## Files: ${what} (${entries.length}, truncated — narrow the pattern or use a subdirectory)`
-    : `## Files: ${what} (${entries.length})`;
+    ? `## Files: ${what} (${entries.length}, ${filter}, truncated — narrow the pattern or use a subdirectory)`
+    : `## Files: ${what} (${entries.length}, ${filter})`;
 
   const rows = entries.map((f) => {
     const lines = f.lines === null ? "—" : `${f.lines} lines`;
@@ -460,8 +563,56 @@ export async function globFiles(params: GlobParams): Promise<string> {
 }
 
 /**
+ * Split a grep output line into the file it belongs to and the rest.
+ *
+ * grep spells a match `path:12:text` and, under `-C`, a context line `path-11-text` — a dash, not a
+ * colon. A filter that knows only the colon form drops every context line the model asked for. The
+ * path itself may contain either character, so the first split is a guess and we widen it until a
+ * candidate lands in the set of files we know about.
+ */
+function grepLinePath(line: string, known: (candidate: string) => boolean): string | null {
+  const re = /[:-]\d+[:-]/g;
+  for (let m = re.exec(line); m; m = re.exec(line)) {
+    const candidate = line.slice(0, m.index);
+    if (candidate && known(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Keep only the grep output belonging to files git can see.
+ *
+ * `grep -r` honours neither `.gitignore` nor hidden-file rules, so before issue #22 a run without
+ * ripgrep searched a strictly wider tree than one with it — in this repository that meant every hit
+ * arriving twice, once from a gitignored worktree holding a second copy of the source. Filtering
+ * the output is what brings the two backends to the same answer.
+ */
+function filterGrepOutput(output: string, dirPath: string, view: GitIgnoreView): string {
+  const kept: string[] = [];
+  const known = (candidate: string): boolean =>
+    !viewDenies(view, relative(dirPath, isAbsolute(candidate) ? candidate : join(dirPath, candidate)));
+
+  for (const line of output.split("\n")) {
+    // A bare "--" separates context blocks. Keep it only between two lines we kept, so dropping a
+    // block never leaves an orphan.
+    if (line === "--") {
+      if (kept.length > 0 && kept[kept.length - 1] !== "--") kept.push(line);
+      continue;
+    }
+    if (grepLinePath(line, known)) kept.push(line);
+  }
+  while (kept.length > 0 && kept[kept.length - 1] === "--") kept.pop();
+  return kept.join("\n");
+}
+
+/**
  * Search file contents. Ripgrep when available, grep otherwise; both return `path:line:text`,
  * which is also the shape the run's coverage tracking reads to learn which files were seen inside.
+ *
+ * Two passes. The first honours git's ignore rules but not its hidden-file blindness; the second
+ * runs only when the first matched nothing at all, drops the ignore rules, and says so. An empty
+ * result is not an answer, only a filtered one — the same reasoning `findFilesNamed` already used,
+ * applied to the tools the model actually calls (issue #22).
  */
 export async function grepFiles(params: GrepParams): Promise<string> {
   const {
@@ -475,16 +626,15 @@ export async function grepFiles(params: GrepParams): Promise<string> {
   const ignore = mergedIgnores(params.ignore_patterns);
   const context = Math.min(Math.max(params["-C"] ?? 0, 0), MAX_CONTEXT_LINES);
   const useRg = await hasRipgrep();
+  const wide = params.include_ignored === true;
+  const view = wide ? null : await gitIgnoreView(dirPath);
 
-  // No directory tree here: a search runs many times per task, and re-sending the whole map on
-  // each call is what makes one big sweep cheaper than several focused ones.
-  const label = useRg ? "ripgrep" : "grep";
-  let searchOutput: string;
-
-  try {
+  const buildArgs = (unfiltered: boolean): string[] => {
+    // `-I` so a binary hit does not arrive as "Binary file X matches", which carries no line number
+    // and so cannot be attributed to a file. verify-symbols has always passed it; this had not.
     const args = useRg
-      ? ["--no-heading", "--line-number", "--color=never"]
-      : ["-rn", "--color=never"];
+      ? ["--no-heading", "--line-number", "--color=never", ...(unfiltered ? UNFILTERED_RG_ARGS : [HIDDEN_RG_ARG])]
+      : ["-rn", "-I", "--color=never"];
 
     if (glob) {
       if (useRg) args.push("--glob", glob);
@@ -501,12 +651,51 @@ export async function grepFiles(params: GrepParams): Promise<string> {
 
     // `--` so a pattern starting with "-" is treated as a pattern, not a flag.
     args.push("--", pattern, dirPath);
+    return args;
+  };
 
-    const { stdout } = await execFileAsync(useRg ? "rg" : "grep", args, { maxBuffer: 10 * 1024 * 1024 });
-    searchOutput = capResults(stdout.trim(), max_results) || "(no results)";
+  // Both engines exit 1 on "no match", which execFile reports as a throw. Turning that into an
+  // empty string here is what lets the widening pass see an empty first pass at all — left as a
+  // throw it escapes to the catch below and the second pass never runs.
+  const runSearch = async (unfiltered: boolean): Promise<string> => {
+    try {
+      const { stdout } = await execFileAsync(useRg ? "rg" : "grep", buildArgs(unfiltered), {
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      return stdout.trim();
+    } catch (err) {
+      if ((err as { code?: number }).code === 1) return "";
+      throw err;
+    }
+  };
+
+  const label = useRg ? "ripgrep" : "grep";
+  let searchOutput: string;
+  let widened = false;
+
+  try {
+    // grep searched everything either way, so its widened result is already in hand — no second
+    // spawn on this branch, only on ripgrep's.
+    const raw = await runSearch(wide);
+    // Filter before capping, or `max_results` is spent on lines that are then discarded. ripgrep
+    // applied the policy itself; only the grep fallback arrives here unfiltered.
+    let hits = view && !wide && !useRg ? filterGrepOutput(raw, dirPath, view) : raw;
+
+    if (!hits && !wide) {
+      const widerRaw = useRg ? await runSearch(true) : raw;
+      if (widerRaw) {
+        // Its own, tighter cap: this is a "here is where the name actually lives" hint, not a
+        // result set, and the files it reaches are build output.
+        hits = capResults(widerRaw, WIDENED_CAP);
+        widened = true;
+      }
+    }
+    searchOutput = capResults(hits, max_results) || "(no results)";
   } catch (err) {
     searchOutput = handleSearchError(err);
   }
 
-  return `## Search (${label}): "${pattern}" in ${dirPath}\n\n${searchOutput}`;
+  const filter = filterLabel({ wide, widened, view });
+  return `## Search (${label}, ${filter}): "${pattern}" in ${dirPath}\n\n${searchOutput}`;
 }
+

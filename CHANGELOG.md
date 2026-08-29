@@ -7,6 +7,69 @@ fixes. "Breaking" below distinguishes the **MCP surface** (`explore_task`, `run_
 `usage_report` — what a client calls) from the **agent-loop surface** (the tools the local
 model is handed inside a run). The two break independently, and only the first affects callers.
 
+## [0.5.0] — 2026-08-29
+
+Give the tree one ignore policy, and let git own it (issue #22).
+
+`explore_task` handed the local model four ways to look at a tree and they disagreed about which
+files existed. The directory map in the prompt walked the filesystem at a hardcoded name list; `Read`
+opened anything; `Grep`/`Glob` shelled out to ripgrep at its defaults, which skips gitignored **and**
+hidden files. So the map advertised a file, `Read` opened it happily, and no search could reach it —
+and *which* of those behaviours you got depended on whether ripgrep happened to be on `PATH`, since
+the `grep` fallback honoured neither rule. The contract made it worse by telling the model to build
+file lists out of `Glob` listings that were silently short.
+
+### Breaking (agent-loop surface)
+- **`Grep` and `Glob` search hidden files.** `.github/`, `.claude/`, `.circleci/` and root dotfiles
+  are ordinary source, not build output, and skipping them was never defensible. This is the half of
+  the problem with no argument on the other side.
+- **Git owns the ignore policy.** New `src/tools/git-ignore.ts` asks
+  `git ls-files --others --ignored --exclude-standard --directory` once and hides what it names —
+  covering nested `.gitignore` files, negations, `.git/info/exclude` and the user's global excludes.
+  The directory map, `Grep`, `Glob` and the `grep`/Node fallbacks all now apply it, so the two search
+  backends finally agree with each other and with the map. Outside a repository, or without git, it
+  changes nothing.
+- **A search that finds nothing is retried without the filter**, and the result says so. An empty
+  result was never an answer, only a filtered one — the reasoning `findFilesNamed` already used,
+  applied to the tools the model actually calls.
+- **Every result names the filter that produced it** (`## Search (ripgrep, git's ignore rules
+  honoured)`). That line is what lets a model tell "nothing is there" from "nothing I can see".
+- **`include_ignored` added to both tools.** The auto-retry only fires on *zero* results; a search
+  that returns four hits in `src/` and misses the gitignored config needs a parameter, not a label.
+- **The built-in ignore list shrank from eleven names to two** (`node_modules`, `.git`). It only ever
+  described the JavaScript ecosystem — `dist`, `.next`, `.turbo` were in it while `target/`,
+  `.venv/`, `vendor/`, `Pods/` were not — so a Rust or Python repo searched its own build output and
+  nobody could fix it without editing that line. A repository already declares what is derived.
+  Outside a git repository the nine dropped names now appear in listings; `ignorePatterns` is the
+  lever if that is unwanted.
+
+### Fixed
+- The `grep` fallback searched a strictly wider tree than ripgrep, so a machine without ripgrep got
+  different answers to the same question — in this repository, every hit twice, once from a
+  gitignored worktree holding a second copy of the source. It now filters the same way.
+- `grepFiles` gained `-I`, which `verify-symbols` has always passed: a binary hit used to arrive as
+  `Binary file X matches`, carrying no line number and attributable to nothing.
+
+### Notes
+- `Read` and the three answer checks deliberately stay outside the policy. A tool that opens files
+  and a tool that fact-checks them both have to see everything — that is the issue #17 fix, and it is
+  why `UNFILTERED_RG_ARGS` still exists.
+- The ignore view is a set of what to **hide**, not what to show, and the direction is load-bearing.
+  An allow-list built from `ls-files --cached --others` looks equivalent and is not: git reports a
+  submodule as a single gitlink, so every file inside one would have vanished from the map and from
+  `Glob` while `Read` opened it — reintroducing the exact bug this release fixes. A deny set fails
+  open.
+- `--directory` collapses a wholly-ignored tree to one entry: 6 entries rather than 4150 on this
+  repository, and it is what lets a walk prune before descending into a 40k-file `.venv/`.
+- With the list down to two names, `.git` is load-bearing rather than redundant. `--hidden` un-hides
+  it as readily as `.github/`, and ripgrep does not special-case it — there is a test asserting
+  `.git` never leaks into results at any width.
+- One consequence accepted rather than fixed: `listAllFiles` feeds `verify-symbols`' in-process
+  third pass and stays unfiltered, so it now walks `dist/` and `coverage/` too. In a repository large
+  enough to exceed its 20,000-file cap, that pass returns inconclusive and its names are dropped
+  rather than warned about — incomplete, never wrong, which is the invariant that file states. A
+  follow-up could order the walk git-visible-first instead.
+
 ## [0.4.1] — 2026-08-29
 
 Make `explore_task`'s self-check trustworthy (issue #17).

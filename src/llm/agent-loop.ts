@@ -86,7 +86,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       function: {
         name: "Grep",
         description:
-          "Search file contents with ripgrep (or grep) and get back matching lines as path:line:text. This is your primary tool — prefer several narrow searches over one broad sweep.",
+          "Search file contents with ripgrep (or grep) and get back matching lines as path:line:text. This is your primary tool — prefer several narrow searches over one broad sweep. Files git ignores are skipped; the result header says which filter ran.",
         parameters: GREP_SCHEMA,
       },
     },
@@ -99,7 +99,7 @@ export const AGENT_TOOLS: AgentTool[] = [
       function: {
         name: "Glob",
         description:
-          "Find files by name pattern (e.g. \"*.ts\", \"src/**/*.tsx\") and get back their paths, line counts and sizes. Use this to see what exists before deciding what to open — never to guess a filename from a convention.",
+          "Find files by name pattern (e.g. \"*.ts\", \"src/**/*.tsx\") and get back their paths, line counts and sizes. Use this to see what exists before deciding what to open — never to guess a filename from a convention. Files git ignores are skipped; the result header says which filter ran.",
         parameters: GLOB_SCHEMA,
       },
     },
