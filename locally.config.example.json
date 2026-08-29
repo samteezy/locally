@@ -2,7 +2,8 @@
   "transport": {
     "mode": "stdio",
     "port": 3000,
-    "host": "127.0.0.1"
+    "host": "127.0.0.1",
+    "authToken": ""
   },
   "default": {
     "baseUrl": "http://localhost:11434/v1",

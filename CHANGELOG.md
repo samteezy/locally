@@ -7,6 +7,23 @@ fixes. "Breaking" below distinguishes the **MCP surface** (`explore_task`, `run_
 `usage_report` — what a client calls) from the **agent-loop surface** (the tools the local
 model is handed inside a run). The two break independently, and only the first affects callers.
 
+## [0.6.0] — 2026-08-29
+
+Put a lock on the HTTP transport (issue #4).
+
+### Added
+- `transport.authToken` (env fallback `LOCALLY_AUTH_TOKEN`): a shared secret `/mcp` requires as
+  `Authorization: Bearer <token>`. Missing or wrong gets a `401` with a `WWW-Authenticate` challenge,
+  answered before the request body is read. `GET /health` stays open.
+- A startup line on stderr saying whether `/mcp` requires a token, next to the existing bind line.
+- A fatal startup `LocallyError` now prints its `Fix:` line, not just its message.
+
+### Breaking (operational — not the MCP or agent-loop surface)
+- Binding a non-loopback host with no token configured is now a startup error rather than a silent
+  success. An existing `LOCALLY_HOST=0.0.0.0` deployment will not start until it sets a token or
+  moves back to `127.0.0.1`. There is deliberately no override flag: the failure being guarded is the
+  quiet one, and a switch that turns the guard off is that same quiet path renamed.
+
 ## [0.5.1] — 2026-08-29
 
 Focus `explore_task` on finding, not evaluating (issue #23).

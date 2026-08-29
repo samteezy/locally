@@ -1,4 +1,5 @@
 import { loadConfig, resolveTransportMode, symbolCheckEnabled } from "./config.js";
+import { LocallyError } from "./llm/errors.js";
 import { effectiveRoots } from "./tools/sandbox.js";
 import { startStdio } from "./transport/stdio.js";
 import { startHttp } from "./transport/http.js";
@@ -31,5 +32,10 @@ main().catch((err) => {
   process.stderr.write(
     `Fatal: ${err instanceof Error ? err.message : String(err)}\n`
   );
+  // A startup LocallyError carries the one concrete next step; on stderr that is the whole value of
+  // the failure, and dropping it leaves the operator with a complaint and no remedy.
+  if (err instanceof LocallyError) {
+    process.stderr.write(`Fix: ${err.fix}\n`);
+  }
   process.exit(1);
 });
