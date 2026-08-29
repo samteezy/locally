@@ -179,6 +179,11 @@ test("the prompt bars verdicts and makes the model name the half it left out", a
   // And the narrowing stops there: reporting a mechanism it actually read is still the job, so a
   // later tightening into locate-only fails here rather than silently in an eval.
   expect(system).toContain("Report what the code does and where it is");
+  // The rule is stated above the tool instructions as well as inside the answer rules, and this
+  // pins that. Neither placement holds a 9B asked point-blank for a verdict — both measured runs
+  // returned a review — so the assertion is here to keep the statement from being dropped by
+  // accident, not because position alone was found sufficient.
+  expect(system.indexOf("you still do not give one")).toBeLessThan(system.indexOf("How to work:"));
 });
 
 test("a very thorough run that ends immediately is marked a shallow sweep", async () => {

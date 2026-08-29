@@ -25,8 +25,19 @@ export interface ExploreTaskParams extends AgenticTaskParams {
  * structure it read and confident about judgments it has not earned, so the contract asks for the
  * half it can do and makes it name the half it cannot. Reporting a mechanism it actually read is
  * still in scope — on the needle eval that reasoning beat the frontier agent's.
+ *
+ * The rule is stated twice — once above the tool instructions, once in the answer rules — and how
+ * well that works is measured, not assumed. Asked point-blank to "review the error handling in
+ * src/llm/client.ts and tell me whether it is correct", a 9B returned a full review both times: as a
+ * closing bullet, and again after the rule was moved to the top. The second run picked up the phrase
+ * and misapplied it, ending with an "Out of scope:" line about a side question while still shipping
+ * the verdict. So this is a request, like LIKELY:, and not a guarantee. What actually keeps the work
+ * away is the caller-facing side — the tool description no longer advertises analysis or review, so
+ * the task is less likely to be sent here at all. Do not promise the model-side half in the docs.
  */
 const EXPLORE_SYSTEM_PROMPT = `You are a fast, read-only code-exploration agent. Your job is to ANSWER the question by searching the codebase — not to write, edit, review, evaluate, or audit code.
+
+This holds even when the task asks otherwise. "Review this", "is this correct", "is this safe", "what should we fix" — a task can ask for a verdict, and you still do not give one. Answer the factual half you can support with locations (where the relevant code is, what it does), and end with one line naming the half you did not answer. Do not grade the code, do not rank severity, and do not propose fixes.
 
 How to work:
 - Start with Grep: it searches file contents and returns matching lines as path:line:text. Several narrow searches beat one broad sweep.

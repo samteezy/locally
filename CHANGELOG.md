@@ -24,9 +24,16 @@ Nothing in the schema or the behaviour changes; what narrows is what the tools p
 ### Changed
 - **The `explore_task` contract bars verdicts.** Its output is findings, not an assessment: no
   judging quality or correctness, no severity or risk ratings, no recommendations, and no summary
-  or "key takeaways" section nobody asked for. A task that asks for one gets the factual what/where
-  half plus a line naming what was left out — "Out of scope: whether this is safe. Reported: where
-  each check runs." A named gap is useful to the caller; a guessed verdict is worse than nothing.
+  or "key takeaways" section nobody asked for. A task that asks for one is answered with the factual
+  what/where half plus a line naming what was left out — "Out of scope: whether this is safe.
+  Reported: where each check runs." A named gap is useful to the caller; a guessed verdict is worse
+  than nothing. The rule is stated at the top of the contract as well as
+  in the answer rules, and how far that gets is measured rather than assumed: asked point-blank to
+  review this repository's own client error handling and say whether it is correct, a 9B returned a
+  full review in both positions — the second run picking up the phrase and ending with an "Out of
+  scope:" line about a side question while still shipping the verdict. Like the `LIKELY:` marker
+  this is a request to the model, not something the server enforces. The caller-facing half below is
+  what actually keeps such a task from arriving.
 - **Reporting a mechanism it actually read is still in scope.** The narrowing is "no verdicts",
   not "locate only" — on the needle eval that reasoning beat the frontier agent's, and a test now
   fails if a later tightening drops it.
