@@ -9,9 +9,21 @@ const SERVER_INSTRUCTIONS = `locally is an assistant for your assistant. It runs
 
 Send low-stakes, repetitive, or mechanical work here. This keeps the work off the frontier model.
 
-Use explore_task for these jobs:
-- Wide codebase searches: where a thing is, how something works, naming-convention sweeps.
-- Inventory of a codebase: what exists, where it is, what a cited line says.
+Use explore_task to search a codebase and to read what it contains.
+
+explore_task is accurate and complete when the answer is text in the code. Ask it for these:
+- A name, a path, or a line number.
+- The files or the lines that match a pattern.
+- The text at a cited line.
+- A naming-convention sweep across many files.
+
+explore_task is accurate but can be incomplete when you ask how something works. It reports what the code says. It can stop before the end of a call path.
+
+explore_task can be confidently wrong when it must derive the answer. Check each of these against the code:
+- The default value of a config key.
+- The order that the code uses to resolve a value.
+- A complete count of a set of files or keys.
+- A rule about which code runs and when.
 
 explore_task returns a conclusion with file:line citations, not file dumps. It reports what the code does and where it is. Keep code review, audits, severity ratings, and design judgment for yourself.
 
@@ -79,7 +91,7 @@ const EXPLORE_INPUT_SCHEMA = {
  * response's `_meta`, so server.test.ts asserts it against package.json rather than leaving it
  * to drift.
  */
-const SERVER_VERSION = "0.6.2";
+const SERVER_VERSION = "0.6.3";
 
 export function createServer(config: LocallyConfig): Server {
   const server = new Server(
@@ -115,7 +127,9 @@ export function createServer(config: LocallyConfig): Server {
           "Read-only search across a codebase with a local model. It is the local-model equivalent of an Explore subagent.\n\n" +
           "It searches file contents with ripgrep and reads short excerpts. It returns a conclusion with file:line citations, not file dumps.\n\n" +
           "The server checks the answer before it comes back. It resolves the citations against the filesystem again. It checks that the file paths and the asserted names exist. Each check states how much of the answer it covered. It names each file that the answer describes but never opened.\n\n" +
-          "It is strongest at inventory work: list, enumerate, locate, \"where is X\", and naming-convention sweeps. It is weaker at open-ended \"explain how this is wired\" questions, so check those answers.\n\n" +
+          "It is accurate and complete when the answer is text in the code: a name, a path, a line, or a set of matches.\n\n" +
+          "It is accurate but can be incomplete when you ask how something works. It can stop before the end of a call path.\n\n" +
+          "It can be confidently wrong when it must derive an answer: a default value, an order of precedence, a complete count, or a rule about what runs when. Check these against the code.\n\n" +
           "The path is a starting point, not a boundary. Set breadth to \"medium\" or \"very thorough\".\n\n" +
           "It reports what the code does and where it is. It is not for review, audits, ratings, or recommendations. Ask it where and what. Keep whether and why on the frontier model.",
         inputSchema: EXPLORE_INPUT_SCHEMA,
