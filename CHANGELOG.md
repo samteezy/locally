@@ -31,6 +31,10 @@ A config file on disk replaces the values the plugin asks for at install time. T
 reads `LOCALLY_BASE_URL` and `LOCALLY_MODEL` only when it finds no config file. The plugin
 README and the install prompts now state this.
 
+`plugins/locally/hooks/route-to-locally.test.ts` covers the hook with 19 cases. The suite
+spawns the hook, so it tests the file that Claude Code runs. `vitest.config.ts` names
+`plugins/**/*.test.ts`, and `tsconfig.plugins.json` type-checks the file.
+
 No changes to `src/`. The version bump records the new surface.
 
 ## [0.6.3] — 2026-08-29

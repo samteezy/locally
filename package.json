@@ -22,7 +22,7 @@
     "dev": "tsx watch src/index.ts",
     "dev:http": "LOCALLY_TRANSPORT=http tsx watch src/index.ts",
     "build": "tsup",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.plugins.json",
     "test": "vitest run",
     "test:watch": "vitest",
     "coverage": "vitest run --coverage"

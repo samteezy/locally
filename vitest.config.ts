@@ -3,7 +3,9 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    // The plugin's hook ships as a standalone .mjs outside src/, so its suite is named
+    // here as well. It is type-checked by tsconfig.plugins.json (see the typecheck script).
+    include: ["src/**/*.test.ts", "plugins/**/*.test.ts"],
     coverage: {
       provider: "v8",
       reporter: ["text", "html"],
