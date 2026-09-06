@@ -91,7 +91,7 @@ const EXPLORE_INPUT_SCHEMA = {
  * response's `_meta`, so server.test.ts asserts it against package.json rather than leaving it
  * to drift.
  */
-const SERVER_VERSION = "0.6.3";
+const SERVER_VERSION = "0.7.0";
 
 export function createServer(config: LocallyConfig): Server {
   const server = new Server(

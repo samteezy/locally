@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "locally",
+  "displayName": "locally",
+  "version": "0.1.0",
+  "description": "Delegates codebase exploration and routine writing to a local model over an OpenAI-compatible endpoint. Registers the locally MCP server, and routes large reads and broad searches to explore_task.",
+  "author": {
+    "name": "Sam Taylor",
+    "url": "https://github.com/samteezy"
+  },
+  "homepage": "https://github.com/samteezy/locally",
+  "repository": "https://github.com/samteezy/locally",
+  "license": "GPL-3.0",
+  "keywords": ["mcp", "delegation", "local-models", "token-optimization", "exploration"],
+  "userConfig": {
+    "baseUrl": {
+      "type": "string",
+      "title": "Endpoint base URL",
+      "description": "OpenAI-compatible endpoint the local model is served from.",
+      "default": "http://localhost:11434/v1"
+    },
+    "model": {
+      "type": "string",
+      "title": "Model",
+      "description": "Model name the endpoint serves, such as qwen3-coder:30b."
+    },
+    "apiKey": {
+      "type": "string",
+      "title": "API key",
+      "description": "Sent as a bearer token. Leave empty for a local endpoint that needs no key.",
+      "sensitive": true,
+      "default": ""
+    },
+    "configPath": {
+      "type": "file",
+      "title": "Config file (optional)",
+      "description": "Path to a locally.config.json. When set, this file replaces the three values above."
+    }
+  },
+  "mcpServers": {
+    "locally": {
+      "command": "npx",
+      "args": ["-y", "locally-mcp"],
+      "env": {
+        "LOCALLY_BASE_URL": "${user_config.baseUrl}",
+        "LOCALLY_MODEL": "${user_config.model}",
+        "LOCALLY_API_KEY": "${user_config.apiKey}",
+        "LOCALLY_CONFIG": "${user_config.configPath}"
+      }
+    }
+  },
+  "hooks": "./hooks/hooks.json"
+}

@@ -1,0 +1,19 @@
+{
+  "name": "locally",
+  "owner": {
+    "name": "Sam Taylor",
+    "url": "https://github.com/samteezy"
+  },
+  "plugins": [
+    {
+      "name": "locally",
+      "source": "./plugins/locally",
+      "description": "Delegate codebase exploration and routine writing to a local model. Registers the locally MCP server, ships a delegation skill and subagent, and routes large reads and broad searches to explore_task.",
+      "homepage": "https://github.com/samteezy/locally",
+      "repository": "https://github.com/samteezy/locally",
+      "license": "GPL-3.0",
+      "category": "productivity",
+      "keywords": ["mcp", "delegation", "local-models", "token-optimization", "exploration"]
+    }
+  ]
+}

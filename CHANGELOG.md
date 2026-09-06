@@ -7,6 +7,26 @@ fixes. "Breaking" below distinguishes the **MCP surface** (`explore_task`, `run_
 `usage_report` — what a client calls) from the **agent-loop surface** (the tools the local
 model is handed inside a run). The two break independently, and only the first affects callers.
 
+## [0.7.0] — unreleased
+
+Add a Claude Code plugin in `plugins/locally`, and a marketplace at the repository root.
+
+The plugin installs the parts that make Claude Code delegate. It registers the MCP server
+with `npx -y locally-mcp`, so a user does not run `claude mcp add`. It asks for the endpoint
+base URL and the model at install time. It ships the `delegating-to-locally` skill and the
+`local-delegate` subagent from `docs/claude-code.md`.
+
+The plugin also adds one `PreToolUse` hook, `hooks/route-to-locally.mjs`. The hook blocks a
+`Read` of a file over 400 lines when the call sets no `offset` and no `limit`. It blocks a
+`Grep` that sets no `glob` filter and no `type` filter. Each block names `explore_task` and
+a way back to the native tool, so a wrong block costs one turn. The hook approves
+`explore_task` and `usage_report` because a plugin cannot ship a permissions list.
+`run_task` writes files and runs shell commands, so the hook leaves it to the permission
+prompt. `LOCALLY_READ_MAX_LINES`, `LOCALLY_HOOK_READ`, `LOCALLY_HOOK_GREP` and
+`LOCALLY_HOOK_ALLOW` control the hook.
+
+No changes to `src/`. The version bump records the new surface.
+
 ## [0.6.3] — 2026-08-29
 
 Route work to `explore_task` by how checkable the answer is, not by topic.

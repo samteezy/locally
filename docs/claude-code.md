@@ -27,6 +27,22 @@ If you haven't installed the server yet, see the [main README](../README.md#usag
 
 ---
 
+## 0. Shortcut: install the plugin
+
+Everything in sections 1–3 is packaged in the [`locally` plugin](../plugins/locally):
+
+```bash
+claude plugin marketplace add samteezy/locally
+claude plugin install locally@locally
+```
+
+It registers the MCP server (no `claude mcp add`), ships the skill and the subagent below,
+auto-approves the two read-only tools, and adds a PreToolUse gate that redirects large file
+reads and repo-wide greps to `explore_task`. Read on if you'd rather assemble the pieces
+yourself, or want to understand what the plugin is doing.
+
+---
+
 ## 1. Recommended: a CLAUDE.md instruction
 
 The simplest, lowest-risk lever is a [CLAUDE.md](https://code.claude.com/docs/en/memory)

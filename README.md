@@ -369,6 +369,21 @@ claude mcp add --transport http locally http://localhost:3000/mcp \
   --header "Authorization: Bearer a-long-random-string"
 ```
 
+### Claude Code plugin
+
+The quickest way to install and steer locally in Claude Code is the plugin in
+[`plugins/locally`](plugins/locally). It registers the MCP server, ships a delegation skill
+and subagent, and adds a PreToolUse gate that routes large file reads and repo-wide greps to
+`explore_task`:
+
+```bash
+claude plugin marketplace add samteezy/locally
+claude plugin install locally@locally
+```
+
+You are prompted for the endpoint base URL and model at install time, so there is no
+`claude mcp add` and nothing to clone. See the [plugin README](plugins/locally/README.md).
+
 ### Getting Claude Code to use locally
 
 Installing the server only makes locally's tools *available* — by default Claude Code still does low-stakes work itself with its built-in tools. To actually keep that work off the frontier model you need to steer Claude toward locally. The quickest nudge is a `CLAUDE.md` instruction telling Claude to delegate codebase exploration to `explore_task` and routine drafting/edits to `run_task`.
