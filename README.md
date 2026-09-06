@@ -373,8 +373,7 @@ claude mcp add --transport http locally http://localhost:3000/mcp \
 
 The quickest way to install and steer locally in Claude Code is the plugin in
 [`plugins/locally`](plugins/locally). It registers the MCP server, ships a delegation skill
-and subagent, and adds a PreToolUse gate that routes large file reads and repo-wide greps to
-`explore_task`:
+and subagent, and adds a PreToolUse gate that routes large file reads to `explore_task`:
 
 ```bash
 claude plugin marketplace add samteezy/locally

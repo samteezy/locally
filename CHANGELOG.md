@@ -17,13 +17,19 @@ base URL and the model at install time. It ships the `delegating-to-locally` ski
 `local-delegate` subagent from `docs/claude-code.md`.
 
 The plugin also adds one `PreToolUse` hook, `hooks/route-to-locally.mjs`. The hook blocks a
-`Read` of a file over 400 lines when the call sets no `offset` and no `limit`. It blocks a
-`Grep` that sets no `glob` filter and no `type` filter. Each block names `explore_task` and
-a way back to the native tool, so a wrong block costs one turn. The hook approves
-`explore_task` and `usage_report` because a plugin cannot ship a permissions list.
+`Read` of a file over 400 lines when the call sets no `offset` and no `limit`. The hook can
+also block a `Grep` that sets no `glob` filter and no `type` filter. This second block is
+off. Set `LOCALLY_HOOK_GREP=1` to turn it on. A large read is nearly always wasteful. A
+broad search is often correct, so the operator must ask for that block. Each block names
+`explore_task` and a way back to the native tool, so a wrong block costs one turn. The hook
+approves `explore_task` and `usage_report` because a plugin cannot ship a permissions list.
 `run_task` writes files and runs shell commands, so the hook leaves it to the permission
 prompt. `LOCALLY_READ_MAX_LINES`, `LOCALLY_HOOK_READ`, `LOCALLY_HOOK_GREP` and
 `LOCALLY_HOOK_ALLOW` control the hook.
+
+A config file on disk replaces the values the plugin asks for at install time. The server
+reads `LOCALLY_BASE_URL` and `LOCALLY_MODEL` only when it finds no config file. The plugin
+README and the install prompts now state this.
 
 No changes to `src/`. The version bump records the new surface.
 

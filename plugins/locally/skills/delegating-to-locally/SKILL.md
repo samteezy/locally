@@ -42,6 +42,7 @@ design decisions on the frontier model.
 
 ## When the hook blocks a tool call
 
-The plugin blocks a full read of a large file, and a Grep with no `glob` filter and no
-`type` filter. Send the question to `explore_task`. If you must have the exact text, read
-the file again with `offset` and `limit`, or narrow the Grep.
+The plugin blocks a full read of a large file. The operator can also turn on a block for a
+Grep with no `glob` filter and no `type` filter. Send the question to `explore_task`. If you
+must have the exact text, read the file again with `offset` and `limit`. To search again,
+add a `glob` filter or a `type` filter.

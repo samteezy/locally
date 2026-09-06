@@ -16,13 +16,13 @@
     "baseUrl": {
       "type": "string",
       "title": "Endpoint base URL",
-      "description": "OpenAI-compatible endpoint the local model is served from.",
+      "description": "OpenAI-compatible endpoint the local model is served from. A locally.config.json on disk overrides this.",
       "default": "http://localhost:11434/v1"
     },
     "model": {
       "type": "string",
       "title": "Model",
-      "description": "Model name the endpoint serves, such as qwen3-coder:30b."
+      "description": "Model name the endpoint serves, such as qwen3-coder:30b. A locally.config.json on disk overrides this."
     },
     "apiKey": {
       "type": "string",
@@ -34,7 +34,7 @@
     "configPath": {
       "type": "file",
       "title": "Config file (optional)",
-      "description": "Path to a locally.config.json. When set, this file replaces the three values above."
+      "description": "Path to a locally.config.json. This file replaces the three values above. Note that a locally.config.json in the working directory, or ~/.locally/config.json, is found on its own and also replaces them."
     }
   },
   "mcpServers": {

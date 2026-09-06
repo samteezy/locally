@@ -18,6 +18,7 @@ const NON_TEXT = new Set([
 const HUGE_BYTES = 2_000_000;
 
 const off = (name) => process.env[name] === "0";
+const on = (name) => process.env[name] === "1";
 
 function deny(reason) {
   process.stdout.write(
@@ -150,7 +151,9 @@ if (tool === "Read") {
   if (off("LOCALLY_HOOK_READ")) pass();
   gateRead(args);
 } else if (tool === "Grep") {
-  if (off("LOCALLY_HOOK_GREP")) pass();
+  // Opt-in. The Read gate blocks a call that is nearly always wasteful. This one blocks a
+  // search that is often the right call, so it is off until the operator asks for it.
+  if (!on("LOCALLY_HOOK_GREP")) pass();
   gateGrep(args);
 } else if (tool === "mcp__locally__explore_task" || tool === "mcp__locally__usage_report") {
   // A plugin cannot ship a permissions allowlist, so the allow decision is made here.

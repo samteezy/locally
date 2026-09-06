@@ -38,8 +38,8 @@ claude plugin install locally@locally
 
 It registers the MCP server (no `claude mcp add`), ships the skill and the subagent below,
 auto-approves the two read-only tools, and adds a PreToolUse gate that redirects large file
-reads and repo-wide greps to `explore_task`. Read on if you'd rather assemble the pieces
-yourself, or want to understand what the plugin is doing.
+reads to `explore_task` (with an opt-in gate for repo-wide greps). Read on if you'd rather
+assemble the pieces yourself, or want to understand what the plugin is doing.
 
 ---
 
