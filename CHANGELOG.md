@@ -43,7 +43,20 @@ through. The gate makes the bypass more expensive. It does not close the bypass.
 spawns the hook, so it tests the file that Claude Code runs. `vitest.config.ts` names
 `plugins/**/*.test.ts`, and `tsconfig.plugins.json` type-checks the file.
 
-No changes to `src/`. The version bump records the new surface.
+**Agent-loop surface:** `run_task` now sends a system prompt. It sent none before this
+release. `runAgenticTask` composes `agentConfig.systemPrompt ?? baseSystemPrompt`, and only
+`explore_task` passed a `baseSystemPrompt`. The tool description told the caller that
+`run_task` does the task and then stops. Nothing told the model.
+
+`RUN_SYSTEM_PROMPT` in `src/tools/run-task.ts` states the contract. It covers how to work,
+how to write a file, how to answer, and the scope. Two rules name where the output lands. A
+model that answers in chat puts a markdown fence around code. That fence is cheap to remove
+from a string. This model calls `write_file`, so the fence goes into the file. locally does
+not remove the fence after the write, because a fence is correct content in a Markdown file.
+The prompt names the fence instead.
+
+An agent with its own `systemPrompt` still replaces this contract. `src/tools/run-task.test.ts`
+pins that behaviour with 6 cases.
 
 ## [0.6.3] — 2026-08-29
 
