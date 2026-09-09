@@ -117,6 +117,75 @@ test("LOCALLY_HOOK_READ=0 turns the Read gate off", () => {
   expect(run("Read", { file_path: big }, { LOCALLY_HOOK_READ: "0" }).decision).toBe("none");
 });
 
+// --- Bash gate: the same read, spelled as a shell command --------------------
+
+test("cat on a file over the limit is denied", () => {
+  const result = run("Bash", { command: `cat ${big}` });
+  expect(result.decision).toBe("deny");
+  expect(result.reason).toContain("mcp__locally__explore_task");
+  expect(result.reason).toContain("head -n");
+});
+
+test("cat -n is a full read, not a line count", () => {
+  // `-n` numbers the lines for cat and sets a count for head. Reading it as a count here
+  // swallowed the filename and let the call through.
+  expect(run("Bash", { command: `cat -n ${big}` }).decision).toBe("deny");
+});
+
+test("the pagers are gated like cat", () => {
+  expect(run("Bash", { command: `less ${big}` }).decision).toBe("deny");
+  expect(run("Bash", { command: `more ${big}` }).decision).toBe("deny");
+});
+
+test("head and tail are bounded reads and pass by default", () => {
+  expect(run("Bash", { command: `head ${big}` }).decision).toBe("none");
+  expect(run("Bash", { command: `tail ${big}` }).decision).toBe("none");
+  expect(run("Bash", { command: `head -100 ${big}` }).decision).toBe("none");
+  expect(run("Bash", { command: `head -n 50 ${big}` }).decision).toBe("none");
+  expect(run("Bash", { command: `tail -n 20 ${big}` }).decision).toBe("none");
+  expect(run("Bash", { command: `head --lines=50 ${big}` }).decision).toBe("none");
+});
+
+test("an explicit count over the limit is a full read wearing a flag", () => {
+  expect(run("Bash", { command: `head -n 9999 ${big}` }).decision).toBe("deny");
+  expect(run("Bash", { command: `head -5000 ${big}` }).decision).toBe("deny");
+});
+
+test("a byte-bounded read passes whatever the file's length", () => {
+  expect(run("Bash", { command: `head -c 200 ${big}` }).decision).toBe("none");
+  expect(run("Bash", { command: `head --bytes=200 ${big}` }).decision).toBe("none");
+});
+
+test("a pipe or a redirect is not a read into context", () => {
+  expect(run("Bash", { command: `cat ${big} | grep foo` }).decision).toBe("none");
+  expect(run("Bash", { command: `cat ${big} > /dev/null` }).decision).toBe("none");
+});
+
+test("cat under the limit, on a missing file, or on a directory passes", () => {
+  expect(run("Bash", { command: `cat ${small}` }).decision).toBe("none");
+  expect(run("Bash", { command: "cat /nonexistent-4b1f.txt" }).decision).toBe("none");
+  expect(run("Bash", { command: `cat ${dir}` }).decision).toBe("none");
+});
+
+test("an ordinary command is untouched", () => {
+  for (const command of ["git status", "npm test", "ls -la", "rg foo", "node -e \"1\""]) {
+    expect(run("Bash", { command }).decision).toBe("none");
+  }
+});
+
+test("LOCALLY_HOOK_BASH=0 turns the Bash gate off", () => {
+  expect(run("Bash", { command: `cat ${big}` }, { LOCALLY_HOOK_BASH: "0" }).decision).toBe("none");
+});
+
+test("the shell parser fails open rather than guessing", () => {
+  // Documented leaks. Each one raises the cost of the bypass without closing it, and each
+  // must pass rather than deny on a misparse.
+  expect(run("Bash", { command: `cd /tmp && cat ${big}` }).decision).toBe("none");
+  expect(run("Bash", { command: `sed -n '1,9999p' ${big}` }).decision).toBe("none");
+  expect(run("Bash", { command: "cat" }).decision).toBe("none");
+  expect(run("Bash", {}).decision).toBe("none");
+});
+
 // --- Grep gate: opt-in ------------------------------------------------------
 
 test("the Grep gate is off unless the operator opts in", () => {

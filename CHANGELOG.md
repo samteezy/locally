@@ -31,7 +31,15 @@ A config file on disk replaces the values the plugin asks for at install time. T
 reads `LOCALLY_BASE_URL` and `LOCALLY_MODEL` only when it finds no config file. The plugin
 README and the install prompts now state this.
 
-`plugins/locally/hooks/route-to-locally.test.ts` covers the hook with 19 cases. The suite
+The hook also blocks the same read spelled as a shell command. `cat`, `less` and `more` on
+a file over the limit are denied. Without this gate, the `Read` gate has a hole beside it.
+`head` and `tail` pass. They are bounded reads, and `head -n 200` is the fallback that the
+denial recommends. An explicit count over the limit is denied. A pipe, a redirect and a
+byte-bounded read pass. The shell parse fails open at each branch, so `cd x && cat y` gets
+through. The gate makes the bypass more expensive. It does not close the bypass. Set
+`LOCALLY_HOOK_BASH=0` to turn this check off.
+
+`plugins/locally/hooks/route-to-locally.test.ts` covers the hook with 30 cases. The suite
 spawns the hook, so it tests the file that Claude Code runs. `vitest.config.ts` names
 `plugins/**/*.test.ts`, and `tsconfig.plugins.json` type-checks the file.
 

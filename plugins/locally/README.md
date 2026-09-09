@@ -36,7 +36,7 @@ You'll be prompted for the endpoint base URL and the model name. Both feed the M
 | MCP server `locally` | `explore_task`, `run_task`, `usage_report` are available with no `claude mcp add` |
 | Skill `delegating-to-locally` | Tells Claude which tool to call and how far to trust the answer |
 | Subagent `local-delegate` | `@agent-local-delegate` runs a task with *only* the locally tools |
-| PreToolUse hook | Blocks a full read of a large file, pointing it at `explore_task`. An opt-in `Grep` gate does the same for repo-wide searches. |
+| PreToolUse hook | Blocks a full read of a large file — as `Read` or as `cat` — pointing it at `explore_task`. An opt-in `Grep` gate does the same for repo-wide searches. |
 
 The hook also auto-approves `explore_task` and `usage_report` so delegation isn't prompted
 every time. `run_task` is deliberately left to the normal permission prompt: it writes
@@ -44,13 +44,26 @@ files, patches them, and runs shell commands.
 
 ## The hook
 
-One script, `hooks/route-to-locally.mjs`, on three `PreToolUse` matchers. It denies only
-the two calls that cost the most context, and every denial names a way back to the native
+One script, `hooks/route-to-locally.mjs`, on four `PreToolUse` matchers. It denies only
+the calls that cost the most context, and every denial names a way back to the native
 tool — so a wrong call costs one turn, not the session.
 
 **`Read`** is blocked when the file is over 400 lines *and* the call has no `offset` or
 `limit`. Targeted reads, small files, missing files, and non-text files (images, PDFs,
 notebooks) always pass.
+
+**`Bash`** is gated for the same read spelled as a shell command: `cat`, `less` and `more`
+on a file over the limit. Without this the `Read` gate is a fence with a gate-shaped hole
+next to it. `head` and `tail` pass — they're bounded reads by nature, and `head -n 200 f` is
+the exact fallback the denial recommends — unless an explicit count exceeds the limit
+(`head -n 9999 f`). Pipes (`cat f | grep x`), redirects (`cat f > g`) and byte-bounded reads
+(`head -c 200 f`) all pass.
+
+> Parsing a shell string is inherently partial. `cd x && cat y`, `sed -n '1,9999p' y`, and a
+> path with spaces all slip through, and every branch fails open by design. This raises the
+> cost of the bypass; it does not close it. shunt's equivalent has the opposite bug — it
+> strips flags *before* the size test, so it blocks `head -100 bigfile`, the very escape
+> hatch it tells you to use.
 
 **`Grep`** is **off by default.** Set `LOCALLY_HOOK_GREP=1` to turn it on. It then blocks a
 search with no `glob` and no `type` filter — a sweep of the whole tree or of a whole
@@ -73,11 +86,18 @@ in the `env` block of `.claude/settings.json` (project) or `~/.claude/settings.j
 |---|---|---|
 | `LOCALLY_READ_MAX_LINES` | `400` | Line count above which a full `Read` is blocked |
 | `LOCALLY_HOOK_READ` | on | Set to `0` to disable the `Read` gate |
+| `LOCALLY_HOOK_BASH` | on | Set to `0` to disable the `Bash` gate |
 | `LOCALLY_HOOK_GREP` | **off** | Set to `1` to enable the `Grep` gate |
 | `LOCALLY_HOOK_ALLOW` | on | Set to `0` to stop auto-approving the read-only locally tools |
 
 Turn the `Grep` gate on if you want exploration pushed to `explore_task` as a rule rather
 than a preference. Expect it to fire often.
+
+**`LOCALLY_READ_MAX_LINES` is the first knob to reach for.** A delegation here is not a
+single round trip — `explore_task` runs an agentic loop, and a real run reads a dozen files
+over one to two minutes. That is much slower than a one-shot call, so the file has to be big
+enough for the saved tokens to be worth the wait. 400 lines is a starting point, not a
+measured optimum; raise it if the gate feels expensive in your repo.
 
 ## What doesn't get delegated
 
